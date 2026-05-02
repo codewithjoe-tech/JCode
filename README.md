@@ -8,7 +8,7 @@ If you've ever watched Claude or GPT spend 40 tool calls grepping through your c
 
 jcode builds a feature graph of your repo — functions, classes, imports, call relationships — stores it locally as a SQLite database, and exposes it as an MCP server. Instead of reading twenty files, your AI agent calls one tool and gets exactly the context it needs.
 
-It's fast, it's local, and it works with any repo that has Python in it (TypeScript, Go, Rust, and JS support is also in there).
+It's fast, it's local, and it works with Python, TypeScript, JavaScript, Go, and Rust repos right out of the box.
 
 ---
 
@@ -26,7 +26,33 @@ From there, your AI agent has five tools:
 | `jcode_blast_radius` | Reverse BFS — "if I change this, what breaks?" |
 | `jcode_index` | Trigger a (re-)index from inside a conversation |
 
-The blast radius tool is the one people find most surprising. Change a model field and instantly know every view, signal handler, and serializer that depends on it.
+The blast radius tool is the one people find most surprising. Change a function signature, a model field, or a shared utility and instantly see every caller, handler, and dependent that needs to know about it — across the entire codebase, regardless of language.
+
+---
+
+## Language support
+
+jcode uses [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) under the hood, so it understands the actual structure of your code rather than just searching text.
+
+| Language | Status |
+|----------|--------|
+| Python | ✅ Full support — functions, classes, methods, imports, call edges |
+| TypeScript | ✅ Supported |
+| JavaScript | ✅ Supported |
+| Go | ✅ Supported |
+| Rust | ✅ Supported |
+
+Mixed-language repos work fine — index once, query across everything.
+
+Install the parsers you need:
+
+```bash
+pip install jcode[typescript]
+pip install jcode[javascript]
+pip install jcode[go]
+pip install jcode[rust]
+pip install jcode[all-langs]   # everything at once
+```
 
 ---
 
@@ -34,18 +60,11 @@ The blast radius tool is the one people find most surprising. Change a model fie
 
 **Step 1 — Install from source**
 
-Clone the repo and install it locally. Not on PyPI yet.
+Not on PyPI yet — install directly from the repo.
 
 ```bash
 git clone https://github.com/<your-username>/jcode.git
 cd jcode
-pip install -e .
-```
-
-Or if you already have the folder:
-
-```bash
-cd C:\path\to\jcode
 pip install -e .
 ```
 
@@ -58,104 +77,90 @@ jcode --help
 **Step 2 — Index your project**
 
 ```bash
-jcode index C:\path\to\your\project
+jcode index /path/to/your/project
 ```
 
-This creates a `.jcode/` folder inside your project with the graph database.
+This creates a `.jcode/` folder inside your project with the graph database. Works on any supported language — point it at a Python backend, a TypeScript frontend, a Go service, whatever.
 
 **Step 3 — Write CLAUDE.md**
 
 ```bash
-jcode init C:\path\to\your\project
+jcode init /path/to/your/project
 ```
 
-This writes a `CLAUDE.md` at your project root so Claude Code knows to use jcode.
+This writes a `CLAUDE.md` at your project root so Claude Code knows to use jcode instead of grepping.
 
 **Step 4 — Connect to Claude Code**
 
 ```bash
-jcode setup-mcp C:\path\to\your\project
+jcode setup-mcp /path/to/your/project
 ```
 
 This prints the exact command you need to run, something like:
 
 ```
-claude mcp add jcode -e JCODE_DIR=C:\path\to\your\project\.jcode -- jcode serve
+claude mcp add jcode -e JCODE_DIR=/path/to/your/project/.jcode -- jcode serve
 ```
 
-Copy that output and run it. You only need to do this once per project.
+Copy that and run it. One-time setup per project.
 
 **Step 5 — Open Claude Code in your project**
 
 ```bash
-cd C:\path\to\your\project
+cd /path/to/your/project
 claude
 ```
 
-Claude will read `CLAUDE.md` on startup and use jcode instead of grepping through files.
+Claude will read `CLAUDE.md` on startup and use jcode instead of reading files one by one.
 
 ---
 
 ## Incremental indexing
 
-Re-indexing only processes files that changed since the last run. On a large repo it's fast enough to wire up as a file-watcher or a pre-commit hook.
+Re-indexing only processes files that changed since the last run — content hashed, not timestamp compared. Fast enough to run as a file-watcher or a pre-commit hook.
 
 ```bash
-jcode index /path/to/repo            # incremental (default)
-jcode index /path/to/repo --full-reindex   # wipe and rebuild
+jcode index /path/to/repo                    # incremental (default)
+jcode index /path/to/repo --full-reindex     # wipe and rebuild
 ```
 
 ---
 
-## Plugin system
+## Framework plugins
 
-jcode has a plugin system for framework-specific edges that generic call analysis can't see. Auto-detection is based on what's in `requirements.txt` or `pyproject.toml` — no config needed.
+For some frameworks, generic call analysis isn't enough — you need to understand what the framework is doing with your code. jcode has a plugin system for exactly this. Auto-detection is based on your `requirements.txt` or `pyproject.toml`, no config needed.
 
-**FastAPI plugin** — detects `Depends(fn)` and `Security(fn)` in route handlers and emits typed `depends` edges. So blast radius from `get_current_user` correctly reaches every protected route.
+**FastAPI** — detects `Depends(fn)` and `Security(fn)` in route handlers and emits typed `depends` edges. Blast radius from `get_current_user` correctly reaches every protected route.
 
-**Django plugin** — three patterns:
-- `path('login/', views.login_view)` → `route` edge to the view
+**Django** — three patterns covered:
+- `path('login/', views.login_view)` → `route` edge to the view function
 - `ForeignKey(User, ...)` → `references` edge between models
 - `@receiver(post_save, sender=User)` → `signal` edge from handler to model
 
-Writing your own plugin is about 50 lines — implement `handled_names` and `handle_call`, drop it in `jcode/indexer/plugins/`, register it in `_REGISTRY`.
+More plugins are coming. Writing one is about 50 lines — implement `handled_names` and `handle_call`, register it in `_REGISTRY`.
 
 ---
 
 ## Semantic search
 
-If you install `sentence-transformers`, search upgrades from keyword matching to semantic vector search. Useful for queries like "date parsing" when the actual function is called `_normalise_timestamp`.
+Install `sentence-transformers` and search upgrades from keyword matching to semantic vector search. Useful when you know what something *does* but not what it's *called*.
 
 ```bash
 pip install jcode[embed]
 ```
 
-Embeddings are computed once on first index and stored in the graph. Incremental re-indexing only embeds new or changed nodes.
-
----
-
-## Language support
-
-Python is the main target and gets the most love. The others work but are less battle-tested.
-
-```bash
-pip install jcode[typescript]
-pip install jcode[javascript]
-pip install jcode[go]
-pip install jcode[rust]
-pip install jcode[all-langs]   # all of the above
-```
+Embeddings are computed once on first index and stored in the graph. Incremental runs only embed new or changed nodes.
 
 ---
 
 ## How the graph is stored
 
-Everything goes in `.jcode/` at your repo root. Two things live there:
+Everything goes in `.jcode/` at your repo root:
 
-- `graph.db` — SQLite database with nodes, edges, FTS5 index, embeddings, and a file-hash manifest for incremental indexing
-- `objects/` — content-addressable store for raw node data (git-style, keyed by SHA-256)
+- `graph.db` — SQLite database with nodes, edges, FTS5 full-text index, vector embeddings, and a file-hash manifest for incremental indexing
+- `objects/` — content-addressable store for raw node data (git-style blobs, keyed by SHA-256)
 
-Add `.jcode/` to your `.gitignore`. It's generated data — no point committing it.
+Add `.jcode/` to your `.gitignore` — it's generated data.
 
 ---
 
@@ -166,7 +171,7 @@ jcode index <repo>          Index or re-index a repository
 jcode init  <repo>          Write CLAUDE.md to the repo root
 jcode status <repo>         Show index stats
 jcode setup-mcp <repo>      Print the claude mcp add command
-jcode serve                 Start the MCP server (stdio)
+jcode serve                 Start the MCP server (stdio transport)
 ```
 
 ---
@@ -175,21 +180,20 @@ jcode serve                 Start the MCP server (stdio)
 
 ```
 src/jcode/
-├── domain/         models, ports (no external deps)
+├── domain/         core models and port interfaces (zero external deps)
 ├── storage/        SQLite graph DB + content-addressable object store
-├── indexer/        Tree-sitter parser, builder, plugins, embedder
-├── graph/          DFS context + BFS blast radius traversal
-└── mcp/            FastMCP server (the five tools)
+├── indexer/        Tree-sitter parsers, incremental builder, plugins, embedder
+├── graph/          DFS context traversal + BFS blast radius
+└── mcp/            FastMCP server exposing the five tools
 ```
 
 ---
 
-## Limitations / known things
+## Known limitations
 
-- Python parsing is mature. Other languages are usable but won't catch every edge.
-- Cross-file call resolution is name-based — same-name functions in different modules are treated as the same target. This is almost always fine in practice.
-- The semantic search is as good as your sentence-transformer model. The default (`all-MiniLM-L6-v2`) is fast and decent.
-- `.jcode/` can get large on very big repos. Run `jcode index --full-reindex` occasionally if it feels stale.
+- Cross-file call resolution is name-based — if two modules have a function with the same name, they're treated as the same target. Rare in practice but worth knowing.
+- The semantic search quality depends on your sentence-transformer model. The default (`all-MiniLM-L6-v2`) is fast and good enough for most codebases.
+- `.jcode/` grows with your repo. `--full-reindex` cleans it up if it feels stale.
 
 ---
 
