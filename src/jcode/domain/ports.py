@@ -8,7 +8,7 @@ testable via simple fakes.
 """
 
 
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from jcode.domain.models import (
     BlastRadiusResult,
@@ -19,8 +19,6 @@ from jcode.domain.models import (
     TraversalResult,
 )
 
-if TYPE_CHECKING:
-    pass
 # Storage ports
 @runtime_checkable
 class ObjectStorePort(Protocol):

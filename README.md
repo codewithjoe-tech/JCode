@@ -58,19 +58,22 @@ pip install jcode[all-langs]   # everything at once
 
 ## Quick start
 
-**Step 1 — Install from source**
-
-Not on PyPI yet — install directly from the repo.
+**Step 1 — Install**
 
 ```bash
-git clone https://github.com/<your-username>/jcode.git
-cd jcode
-pip install -e .
+pip install jcode
+```
+
+Or with uv:
+
+```bash
+uv add jcode
 ```
 
 Verify it worked:
 
 ```bash
+jcode --version
 jcode --help
 ```
 
@@ -211,4 +214,4 @@ Built because reading source code line by line is a bad use of an AI agent's att
 
 **Joel Thomas**
 
-[🌐 codewithjoe.in](https://codewithjoe.in) · [LinkedIn](https://www.linkedin.com/in/codewithjoe) · [Instagram](https://www.instagram.com/codewithjoe16/)
+[🌐 codewithjoe.in](https://codewithjoe.in) · [LinkedIn](https://www.linkedin.com/in/codewithjoe) · [Instagram](https://www.instagram.com/codewithjoe16/) · [𝕏](https://x.com/codewithjoee)

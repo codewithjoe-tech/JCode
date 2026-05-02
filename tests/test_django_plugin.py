@@ -1,10 +1,14 @@
 """
-Tests for the Django edge plugin.
+Tests for the Django edge plugin (jcode-django package).
 
 Covers:
 - URL routing: path() / re_path() / url()
 - Model relations: ForeignKey / OneToOneField / ManyToManyField
 - Signal receivers: @receiver(signal, sender=Model)
+
+Requires the jcode-django package to be installed:
+    pip install jcode-django
+    # or: jcode add django
 """
 import textwrap
 import tempfile
@@ -12,13 +16,13 @@ import os
 from pathlib import Path
 import pytest
 
-from jcode.domain.models import NodeId, NodeType
-from jcode.indexer.plugins.django_plugin import (
-    DjangoPlugin,
-    EDGE_ROUTE,
-    EDGE_REFERENCES,
-    EDGE_SIGNAL,
+jcode_django = pytest.importorskip(
+    "jcode_django",
+    reason="jcode-django not installed — run `jcode add django` or `pip install jcode-django`",
 )
+
+from jcode_django.plugin import DjangoPlugin, EDGE_ROUTE, EDGE_REFERENCES, EDGE_SIGNAL
+from jcode.domain.models import NodeId, NodeType
 from jcode.storage.graph_db import GraphDB
 from jcode.storage.object_store import ObjectStore
 from jcode.indexer.builder import Indexer
@@ -30,12 +34,10 @@ from jcode.indexer.plugins import build_parser
 # ---------------------------------------------------------------------------
 
 def _index_source(src: str):
-    """Index a snippet and return (graph, store)."""
+    """Index a snippet and return (nodes, edges)."""
     with tempfile.TemporaryDirectory() as tmp:
         repo = os.path.join(tmp, "repo")
         os.makedirs(repo)
-        # write a fake requirements.txt so django plugin is NOT auto-loaded
-        # (we inject it manually via build_parser override)
         with open(os.path.join(repo, "views.py"), "w") as f:
             f.write(textwrap.dedent(src))
         # write django to requirements so auto-detect picks it up
@@ -48,7 +50,6 @@ def _index_source(src: str):
         parser = build_parser(repo)
         indexer = Indexer(parser, store, graph)
         indexer.index(repo)
-        # return detached copies
         all_nodes = list(graph.all_nodes())
         all_edges = list(graph.all_edges())
         return all_nodes, all_edges
@@ -170,7 +171,6 @@ class TestModelRelations:
                 parent = models.ForeignKey('self', null=True, on_delete=models.SET_NULL)
         """)
         ref_edges = [e for e in edges if e.edge_type == EDGE_REFERENCES]
-        # "self" should be filtered out
         target_ids = {e.target_id for e in ref_edges}
         targets = [n for n in nodes if n.id in target_ids]
         assert not any(n.name == "self" for n in targets)

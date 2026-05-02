@@ -71,7 +71,7 @@ def show_edges(graph, node):
         print(f"\n  CALLS / DEPENDS ON  ({len(out)}):")
         for e, n in out:
             if n:
-                print(f"    --[{e.edge_type.value}]--> {n.title}  ({n.file_path}:{n.line_start})")
+                print(f"    --[{e.edge_type}]--> {n.title}  ({n.file_path}:{n.line_start})")
     else:
         print("\n  CALLS / DEPENDS ON: none")
 
@@ -79,7 +79,7 @@ def show_edges(graph, node):
         print(f"\n  CALLED BY / DEPENDED ON BY  ({len(inc)}):")
         for e, n in inc:
             if n:
-                print(f"    <--[{e.edge_type.value}]-- {n.title}  ({n.file_path}:{n.line_start})")
+                print(f"    <--[{e.edge_type}]-- {n.title}  ({n.file_path}:{n.line_start})")
     else:
         print("\n  CALLED BY: none")
 

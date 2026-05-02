@@ -1,9 +1,28 @@
 [project]
 name = "jcode"
 version = "0.1.0"
-description = "Feature-graph code intelligence for AI agents - git-style on-disk store"
+description = "Feature-graph code intelligence for AI agents — stop grepping, start graphing"
 readme = "README.md"
 requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [
+    { name = "Joel Thomas", email = "joel@codewithjoe.in" },
+]
+keywords = [
+    "code-intelligence", "mcp", "claude", "tree-sitter",
+    "static-analysis", "ai-agents", "code-graph",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Software Development :: Build Tools",
+    "Environment :: Console",
+]
 dependencies = [
     "tree-sitter>=0.23",
     "tree-sitter-python>=0.23",
@@ -11,6 +30,11 @@ dependencies = [
     "msgpack>=1.1",
     "mcp>=1.0",
 ]
+
+[project.urls]
+Homepage   = "https://github.com/codewithjoe-tech/jcode"
+Repository = "https://github.com/codewithjoe-tech/jcode"
+Issues     = "https://github.com/codewithjoe-tech/jcode/issues"
 
 [project.scripts]
 jcode = "jcode.cli:main"
@@ -54,6 +78,22 @@ ignore = ["UP042"]
 
 [tool.ruff.lint.per-file-ignores]
 "src/jcode/storage/graph_db.py" = ["E501"]
+
+[tool.hatch.build.targets.wheel]
+exclude = [
+    "src/jcode/git_utils.py",
+    "src/jcode/indexer/parser.py",
+    "src/jcode/indexer/plugins/fastapi_plugin.py",
+    "src/jcode/indexer/plugins/django_plugin.py",
+]
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+    "src/jcode/git_utils.py",
+    "src/jcode/indexer/parser.py",
+    "src/jcode/indexer/plugins/fastapi_plugin.py",
+    "src/jcode/indexer/plugins/django_plugin.py",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

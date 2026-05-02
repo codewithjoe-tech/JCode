@@ -9,9 +9,12 @@ jcode status     <repo>   Show snapshot info
 jcode search     <query>  Search node titles
 jcode setup-mcp  <repo>   Print the claude mcp add command to run
 jcode serve               Start the MCP server (stdio transport)
+jcode plugins             List available plugins
+jcode add        <name>   Install a plugin from the jcode registry
 """
 
-
+import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -73,6 +76,11 @@ SQLite graph of every function, class, method, and module, with typed edges
 | `jcode_blast_radius(node_id)` | Before any edit — see who breaks |
 | `jcode_index(repo_path)` | After large refactors — refresh the graph |
 """
+
+_BUILTIN_PLUGINS: dict[str, str] = {}
+# All plugins are separate packages — install via: jcode add <name>
+
+
 # Helpers
 def _resolve_jcode_dir(repo: str | None, jcode_dir: str | None) -> Path:
     base = Path(repo) if repo else Path.cwd()
@@ -93,10 +101,15 @@ def _write_claude_md(repo: Path) -> None:
         return
     claude_md.write_text(_CLAUDE_MD, encoding="utf-8")
     click.echo(f"  wrote CLAUDE.md → {claude_md}")
+
+
 # CLI group
 @click.group()
+@click.version_option(package_name="jcode")
 def main() -> None:
     """jcode — feature-graph code intelligence for AI agents."""
+
+
 # jcode init
 @main.command()
 @click.argument("repo", default=".", type=click.Path(exists=True, file_okay=False))
@@ -115,6 +128,8 @@ def init(repo: str, jcode_dir: str | None, no_claude_md: bool) -> None:
 
     if not no_claude_md:
         _write_claude_md(Path(repo).resolve())
+
+
 # jcode index
 @main.command()
 @click.argument("repo", default=".", type=click.Path(exists=True, file_okay=False))
@@ -140,6 +155,8 @@ def index(repo: str, jcode_dir: str | None, full: bool) -> None:
         f"{snapshot.edge_count} edges  "
         f"[{snapshot.snapshot_hash[:12]}]"
     )
+
+
 # jcode status
 @main.command()
 @click.argument("repo", default=".", type=click.Path(exists=True, file_okay=False))
@@ -161,6 +178,8 @@ def status(repo: str, jcode_dir: str | None) -> None:
     click.echo(f"files     {snap.file_count}")
     click.echo(f"nodes     {snap.node_count}")
     click.echo(f"edges     {snap.edge_count}")
+
+
 # jcode search
 @main.command()
 @click.argument("query")
@@ -182,6 +201,8 @@ def search(query: str, repo: str, jcode_dir: str | None, limit: int) -> None:
             f"  [{node.node_type.value:8}]  {node.title:45}  "
             f"{node.file_path}:{node.line_start}  id={node.id.hex[:12]}"
         )
+
+
 # jcode setup-mcp
 @main.command("setup-mcp")
 @click.argument("repo", default=".", type=click.Path(exists=True, file_okay=False))
@@ -212,9 +233,94 @@ def setup_mcp(repo: str, jcode_dir: str | None) -> None:
     click.echo("call jcode_feature_map() before touching any files.\n")
     md_status = "yes" if (repo_path / "CLAUDE.md").exists() else "no — run: jcode init"
     click.echo(f"CLAUDE.md presence: {md_status}")
+
+
 # jcode serve
 @main.command()
 def serve() -> None:
     """Start the jcode MCP server (stdio transport, for use with Claude Code)."""
     from jcode.mcp.server import mcp
     mcp.run()
+
+
+# jcode plugins
+@main.command()
+def plugins() -> None:
+    """List available plugins (built-in and registry)."""
+    from importlib.metadata import entry_points
+    from jcode.registry import fetch_registry, RegistryError
+
+    click.echo("Fetching registry …")
+
+    try:
+        registry = fetch_registry()
+    except RegistryError as e:
+        click.echo(f"  Error: {e}", err=True)
+        return
+
+    installed = {ep.name for ep in entry_points(group="jcode.plugins")}
+    registry_plugins = registry.get("plugins", {})
+
+    if not registry_plugins:
+        click.echo("Registry plugins: (none yet — be the first to contribute!)")
+        return
+
+    click.echo("Registry plugins:")
+    for name, info in registry_plugins.items():
+        status = "installed" if name in installed else "not installed"
+        click.echo(f"  {name:<20} {info['description']:<50} [{status}]")
+        click.echo(f"    pip: {info['pip']}  repo: {info.get('repo', 'n/a')}")
+
+
+# jcode add
+@main.command()
+@click.argument("plugin")
+def add(plugin: str) -> None:
+    """Install a plugin from the jcode registry.
+
+    Example: jcode add sqlalchemy
+
+    Plugins not in the registry must be installed manually with pip install.
+    Any package that declares a 'jcode.plugins' entry point will be
+    auto-detected once installed.
+    """
+    from jcode.registry import fetch_registry, RegistryError
+
+    if plugin in _BUILTIN_PLUGINS:
+        click.echo(
+            f"'{plugin}' is a built-in plugin — already included with jcode, "
+            "nothing to install."
+        )
+        return
+
+    try:
+        registry = fetch_registry()
+    except RegistryError as e:
+        raise click.ClickException(str(e))
+
+    registry_plugins = registry.get("plugins", {})
+
+    if plugin not in registry_plugins:
+        names = ", ".join(registry_plugins.keys()) or "none yet"
+        raise click.ClickException(
+            f"'{plugin}' is not in the jcode plugin registry.\n"
+            f"  Available: {names}\n"
+            f"  To install a plugin not in the registry:\n"
+            f"    pip install <package-name>\n"
+            f"  The package must declare a 'jcode.plugins' entry point.\n"
+            f"  To see the full registry: jcode plugins"
+        )
+
+    pip_pkg = registry_plugins[plugin]["pip"]
+    click.echo(f"Installing {plugin} ({pip_pkg}) …")
+
+    result = subprocess.run(
+        [sys.executable, "-m", "pip", "install", pip_pkg],
+        check=False,
+    )
+    if result.returncode != 0:
+        raise click.ClickException(
+            f"Installation failed. Try manually: pip install {pip_pkg}"
+        )
+
+    click.echo(f"Done. '{plugin}' will auto-load for repos that use {plugin}.")
