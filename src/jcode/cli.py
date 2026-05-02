@@ -332,30 +332,23 @@ def add(plugin: str) -> None:
             f"  To see the full registry: jcode plugins"
         )
 
-    pip_pkg = registry_plugins[plugin]["pip"]
     git_url = registry_plugins[plugin].get("git")
+    if not git_url:
+        raise click.ClickException(
+            f"No install source found for '{plugin}' in the registry."
+        )
+
     click.echo(f"Installing {plugin} …")
 
-    def _install(pkg: str) -> bool:
-        """Try pip then uv pip. Returns True on success."""
-        r = subprocess.run([sys.executable, "-m", "pip", "install", pkg], check=False)
-        if r.returncode == 0:
-            return True
-        r = subprocess.run(["uv", "pip", "install", pkg], check=False)
-        return r.returncode == 0
-
-    # 1. Try PyPI package name first (released versions)
-    # 2. Fall back to git install from the registry repo
-    success = _install(pip_pkg)
-    if not success and git_url:
-        click.echo(f"  PyPI package not found — installing from GitHub …")
-        success = _install(f"git+{git_url}")
-
-    if not success:
+    # Install directly from the GitHub repo via uv pip
+    result = subprocess.run(
+        ["uv", "pip", "install", f"git+{git_url}"],
+        check=False,
+    )
+    if result.returncode != 0:
         raise click.ClickException(
             f"Installation failed. Try manually:\n"
-            f"  pip install {pip_pkg}\n"
-            + (f"  pip install git+{git_url}" if git_url else "")
+            f"  uv pip install git+{git_url}"
         )
 
     click.echo(f"Done. '{plugin}' will auto-load for repos that use {plugin}.")
