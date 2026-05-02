@@ -13,9 +13,20 @@ Text built from (in order, use what's available):
   5. file_path      — folder name tells you the feature area
 """
 
+import os
 import re
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+# Suppress huggingface_hub / tokenizer noise before any HF import
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+warnings.filterwarnings("ignore", message=".*symlinks.*")
+warnings.filterwarnings("ignore", message=".*HF_TOKEN.*")
+warnings.filterwarnings("ignore", message=".*unauthenticated.*")
 
 if TYPE_CHECKING:
     from jcode.domain.models import Node
@@ -131,6 +142,7 @@ class Embedder:
         try:
             import logging
             logging.getLogger("fastembed").setLevel(logging.ERROR)
+            logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
             from fastembed import TextEmbedding
             self._model = TextEmbedding(model_name=_FAST_MODEL, show_progress_bar=False)
             self._backend = "fastembed"
@@ -140,10 +152,6 @@ class Embedder:
 
         # Fall back to sentence-transformers (PyTorch — slower)
         import logging
-        import os
-        os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-        os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
-        os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
         logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
         logging.getLogger("transformers").setLevel(logging.ERROR)
         logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
