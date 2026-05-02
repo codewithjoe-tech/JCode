@@ -29,7 +29,7 @@ def fetch_registry(url: str = REGISTRY_URL) -> dict:
     is not valid JSON.
     """
     try:
-        with urllib.request.urlopen(url, timeout=8) as resp:
+        with urllib.request.urlopen(url, timeout=15) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.URLError as e:
         raise RegistryError(

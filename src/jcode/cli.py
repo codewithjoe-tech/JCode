@@ -312,15 +312,29 @@ def add(plugin: str) -> None:
         )
 
     pip_pkg = registry_plugins[plugin]["pip"]
-    click.echo(f"Installing {plugin} ({pip_pkg}) …")
+    git_url = registry_plugins[plugin].get("git")
+    click.echo(f"Installing {plugin} …")
 
-    result = subprocess.run(
-        [sys.executable, "-m", "pip", "install", pip_pkg],
-        check=False,
-    )
-    if result.returncode != 0:
+    def _install(pkg: str) -> bool:
+        """Try pip then uv pip. Returns True on success."""
+        r = subprocess.run([sys.executable, "-m", "pip", "install", pkg], check=False)
+        if r.returncode == 0:
+            return True
+        r = subprocess.run(["uv", "pip", "install", pkg], check=False)
+        return r.returncode == 0
+
+    # 1. Try PyPI package name first (released versions)
+    # 2. Fall back to git install from the registry repo
+    success = _install(pip_pkg)
+    if not success and git_url:
+        click.echo(f"  PyPI package not found — installing from GitHub …")
+        success = _install(f"git+{git_url}")
+
+    if not success:
         raise click.ClickException(
-            f"Installation failed. Try manually: pip install {pip_pkg}"
+            f"Installation failed. Try manually:\n"
+            f"  pip install {pip_pkg}\n"
+            + (f"  pip install git+{git_url}" if git_url else "")
         )
 
     click.echo(f"Done. '{plugin}' will auto-load for repos that use {plugin}.")
