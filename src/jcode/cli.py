@@ -20,7 +20,7 @@ from pathlib import Path
 
 import click
 
-from jcode.graph.traversal import search_entry_points
+from jcode.graph.traversal import search_entry_points, search_semantic
 from jcode.indexer.builder import Indexer
 from jcode.indexer.generic_parser import GenericParser
 from jcode.storage.graph_db import GraphDB
@@ -212,15 +212,15 @@ def search(query: str, repo: str, jcode_dir: str | None, limit: int) -> None:
     jcode_path = _resolve_jcode_dir(repo, jcode_dir)
     _, graph = _open_stores(jcode_path)
 
-    nodes = search_entry_points(graph, query, limit=limit)
-    if not nodes:
+    results = search_semantic(graph, query, limit=limit)
+    if not results:
         click.echo("No results.")
         return
 
-    for node in nodes:
+    for node, score in results:
         click.echo(
             f"  [{node.node_type.value:8}]  {node.title:45}  "
-            f"{node.file_path}:{node.line_start}  id={node.id.hex[:12]}"
+            f"{node.file_path}:{node.line_start}  score={score:.2f}  id={node.id.hex[:12]}"
         )
 
 
