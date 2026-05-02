@@ -102,6 +102,25 @@ def _write_claude_md(repo: Path) -> None:
     claude_md.write_text(_CLAUDE_MD, encoding="utf-8")
     click.echo(f"  wrote CLAUDE.md → {claude_md}")
 
+def _update_gitignore(repo: Path) -> None:
+    """Add .jcode to .gitignore. Creates the file if it doesn't exist."""
+    gitignore = repo / ".gitignore"
+    entry = ".jcode"
+
+    if gitignore.exists():
+        contents = gitignore.read_text(encoding="utf-8")
+        lines = contents.splitlines()
+        if any(line.strip() == entry for line in lines):
+            click.echo(f"  .gitignore already contains {entry} — skipped")
+            return
+        # Append with a trailing newline
+        separator = "\n" if contents and not contents.endswith("\n") else ""
+        gitignore.write_text(contents + separator + entry + "\n", encoding="utf-8")
+        click.echo(f"  added {entry} to .gitignore")
+    else:
+        gitignore.write_text(entry + "\n", encoding="utf-8")
+        click.echo(f"  created .gitignore with {entry}")
+
 
 # CLI group
 @click.group()
@@ -126,8 +145,10 @@ def init(repo: str, jcode_dir: str | None, no_claude_md: bool) -> None:
         (path / "objects").mkdir()
         click.echo(f"Initialised jcode store at {path}")
 
+    repo_path = Path(repo).resolve()
+    _update_gitignore(repo_path)
     if not no_claude_md:
-        _write_claude_md(Path(repo).resolve())
+        _write_claude_md(repo_path)
 
 
 # jcode index
