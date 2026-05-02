@@ -127,7 +127,7 @@ class Embedder:
         if self._model is not None:
             return
 
-        # Try fastembed first (ONNX — fast)
+        # Try fastembed first (ONNX — fast cold start, auto-uses GPU if available)
         try:
             import logging
             logging.getLogger("fastembed").setLevel(logging.ERROR)
