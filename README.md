@@ -32,26 +32,67 @@ The blast radius tool is the one people find most surprising. Change a model fie
 
 ## Quick start
 
+**Step 1 — Install from source**
+
+Clone the repo and install it locally. Not on PyPI yet.
+
 ```bash
-# Install
-pip install jcode
+git clone https://github.com/<your-username>/jcode.git
+cd jcode
+pip install -e .
+```
 
-# Index your repo
-jcode index /path/to/your/repo
+Or if you already have the folder:
 
-# Write CLAUDE.md so Claude Code knows to use jcode
-jcode init /path/to/your/repo
+```bash
+cd C:\path\to\jcode
+pip install -e .
+```
 
-# Get the exact command to register with Claude Code
-jcode setup-mcp /path/to/your/repo
-# → prints: claude mcp add jcode -e JCODE_DIR=... -- jcode serve
+Verify it worked:
 
-# Run that command, then open Claude Code in your repo
-cd /path/to/your/repo
+```bash
+jcode --help
+```
+
+**Step 2 — Index your project**
+
+```bash
+jcode index C:\path\to\your\project
+```
+
+This creates a `.jcode/` folder inside your project with the graph database.
+
+**Step 3 — Write CLAUDE.md**
+
+```bash
+jcode init C:\path\to\your\project
+```
+
+This writes a `CLAUDE.md` at your project root so Claude Code knows to use jcode.
+
+**Step 4 — Connect to Claude Code**
+
+```bash
+jcode setup-mcp C:\path\to\your\project
+```
+
+This prints the exact command you need to run, something like:
+
+```
+claude mcp add jcode -e JCODE_DIR=C:\path\to\your\project\.jcode -- jcode serve
+```
+
+Copy that output and run it. You only need to do this once per project.
+
+**Step 5 — Open Claude Code in your project**
+
+```bash
+cd C:\path\to\your\project
 claude
 ```
 
-That's it. Claude will read `CLAUDE.md` on startup and use jcode instead of grep.
+Claude will read `CLAUDE.md` on startup and use jcode instead of grepping through files.
 
 ---
 

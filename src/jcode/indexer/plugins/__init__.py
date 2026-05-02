@@ -15,9 +15,8 @@ except ImportError:  # Python < 3.11
     import tomli as tomllib  # type: ignore[no-redef]
 
 _REGISTRY: dict[str, str] = {
-    "fastapi":    "jcode.indexer.plugins.fastapi_plugin",
-    "django":     "jcode.indexer.plugins.django_plugin",
-    "sqlalchemy": "jcode.indexer.plugins.sqlalchemy_plugin",
+    "fastapi": "jcode.indexer.plugins.fastapi_plugin",
+    "django":  "jcode.indexer.plugins.django_plugin",
 }
 
 def _scan_dependencies(repo_root: str) -> set[str]:
