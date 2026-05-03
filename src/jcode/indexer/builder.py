@@ -181,10 +181,10 @@ class Indexer:
         n_edges = len(valid_edges)
 
         # Object store blobs (content-addressable, skips if already exists)
-        t1 = time.time()
+        t_blobs = time.time()
         with click.progressbar(
             all_real_nodes,
-            label=f"  Writing {n_nodes:,} nodes",
+            label=f"  Blobs  {n_nodes:,} nodes",
             show_eta=True,
             show_percent=True,
             bar_template="%(label)s  %(bar)s  %(info)s",
@@ -192,13 +192,15 @@ class Indexer:
         ) as bar:
             for node in bar:
                 self._store.put(node)
+        click.echo(f"  blobs done ({time.time() - t_blobs:.1f}s)")
 
         # Single-transaction bulk DB writes — O(1) commits regardless of node count
-        click.echo(f"  Flushing {n_edges:,} edges to DB …", nl=False)
+        click.echo(f"  DB    {n_nodes:,} nodes + {n_edges:,} edges …", nl=False)
+        t_db = time.time()
         self._graph.bulk_upsert_nodes(all_real_nodes)
         self._graph.bulk_upsert_nodes(list(persisted_provisionals.values()))
         self._graph.bulk_upsert_edges(valid_edges)
-        click.echo(f"  done ({time.time() - t1:.1f}s)")
+        click.echo(f"  done ({time.time() - t_db:.1f}s)")
 
         snapshot = self._make_snapshot(repo_root)
         self._graph.save_snapshot(snapshot)

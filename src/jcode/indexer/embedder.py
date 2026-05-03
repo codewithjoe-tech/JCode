@@ -30,6 +30,8 @@ warnings.filterwarnings("ignore", message=".*unauthenticated.*")
 warnings.filterwarnings("ignore", message=".*progress bars.*")
 warnings.filterwarnings("ignore", category=UserWarning, module="huggingface_hub")
 
+from jcode.domain.models import NodeType
+
 if TYPE_CHECKING:
     from jcode.domain.models import Node
     from jcode.storage.graph_db import GraphDB
@@ -222,7 +224,12 @@ def embed_graph(
 
     CALL_TYPES = {EdgeType.CALLS, "depends"}
 
-    nodes = graph.all_nodes()
+    import time as _time
+
+    # Skip IMPORT nodes — they add noise, not signal, to semantic search
+    _SKIP_EMBED = {NodeType.IMPORT}
+
+    nodes = [n for n in graph.all_nodes() if n.node_type not in _SKIP_EMBED]
     already = graph.embeddings_count()
 
     # Only embed if we have new/changed nodes
@@ -233,36 +240,39 @@ def embed_graph(
     node_map = {n.id: n for n in nodes}
     successors_map = graph.all_successors()   # {source_id_hex → [Edge]}
 
-    # Build embedding texts with progress
+    # Build embedding texts
     file_cache: dict[str, list[str]] = {}
     texts: list[str] = []
+    for node in nodes:
+        callees = [
+            node_map[e.target_id].name
+            for e in successors_map.get(node.id.hex, [])
+            if e.edge_type in CALL_TYPES and e.target_id in node_map
+        ]
+        source_lines = (
+            _read_source_snippet(node, repo_root, file_cache) if repo_root else None
+        )
+        texts.append(build_embed_text(node, callees, source_lines))
+
+    # Encode in chunks so we can show a real progress bar
+    CHUNK = 256
+    all_vectors: list[list[float]] = []
+    total_chunks = (len(texts) + CHUNK - 1) // CHUNK
 
     with click.progressbar(
-        nodes,
-        label=f"  Building {len(nodes):,} embeddings",
+        length=len(texts),
+        label=f"  Encoding {len(texts):,} nodes",
         show_eta=True,
         show_percent=True,
         bar_template="%(label)s  %(bar)s  %(info)s",
         width=40,
     ) as bar:
-        for node in bar:
-            callees = [
-                node_map[e.target_id].name
-                for e in successors_map.get(node.id.hex, [])
-                if e.edge_type in CALL_TYPES and e.target_id in node_map
-            ]
-            source_lines = (
-                _read_source_snippet(node, repo_root, file_cache) if repo_root else None
-            )
-            texts.append(build_embed_text(node, callees, source_lines))
-
-    # Batch embed (fastembed / sentence-transformers handle batching internally)
-    click.echo(f"  Running model on {len(texts):,} texts …", nl=False)
-    t0 = __import__("time").time()
-    vectors = embedder.embed_batch(texts)
-    click.echo(f"  done ({__import__('time').time() - t0:.1f}s)")
+        for i in range(0, len(texts), CHUNK):
+            batch = texts[i : i + CHUNK]
+            all_vectors.extend(embedder.embed_batch(batch))
+            bar.update(len(batch))
 
     # Bulk store — single transaction instead of N commits
-    graph.bulk_put_embeddings(list(zip([n.id for n in nodes], vectors, strict=False)))
+    graph.bulk_put_embeddings(list(zip([n.id for n in nodes], all_vectors, strict=False)))
 
     return len(nodes)
