@@ -102,7 +102,7 @@ jcode setup-mcp /path/to/your/project
 This prints the exact command you need to run, something like:
 
 ```
-claude mcp add jcode -e JCODE_DIR=/path/to/your/project/.jcode -- jcode serve
+claude mcp add jcode jcode serve -e "JCODE_DIR=/path/to/your/project/.jcode"
 ```
 
 Copy that and run it. One-time setup per project.
@@ -195,14 +195,14 @@ src/jcode/
 ## Known limitations
 
 - Cross-file call resolution is name-based — if two modules have a function with the same name, they're treated as the same target. Rare in practice but worth knowing.
-- The semantic search quality depends on your sentence-transformer model. The default (`all-MiniLM-L6-v2`) is fast and good enough for most codebases.
+- The semantic search quality depends on the embedding model. The default is `BAAI/bge-small-en-v1.5` via fastembed (ONNX, fast, no PyTorch required). Falls back to `all-MiniLM-L6-v2` via sentence-transformers if fastembed is not installed.
 - `.jcode/` grows with your repo. `--full-reindex` cleans it up if it feels stale.
 
 ---
 
 ## License
 
-Personal and non-commercial use only. See [LICENSE](LICENSE).
+MIT — free to use, modify, distribute, and build commercial products on top of. See [LICENSE](LICENSE).
 
 ---
 
