@@ -94,13 +94,23 @@ def _open_stores(jcode_dir: Path) -> tuple[ObjectStore, GraphDB]:
     return ObjectStore(jcode_dir), GraphDB(jcode_dir)
 
 def _write_claude_md(repo: Path) -> None:
-    """Write CLAUDE.md into the repo root. Never overwrites an existing file."""
+    """Write jcode instructions into CLAUDE.md.
+    Creates the file if it doesn't exist; appends if it does (so existing
+    project instructions are preserved and jcode is still discovered).
+    """
     claude_md = repo / "CLAUDE.md"
     if claude_md.exists():
-        click.echo(f"  CLAUDE.md already exists at {claude_md} — skipped")
-        return
-    claude_md.write_text(_CLAUDE_MD, encoding="utf-8")
-    click.echo(f"  wrote CLAUDE.md → {claude_md}")
+        contents = claude_md.read_text(encoding="utf-8")
+        if "jcode" in contents:
+            click.echo(f"  CLAUDE.md already contains jcode instructions — skipped")
+            return
+        # Append jcode section to existing file
+        separator = "\n" if contents and not contents.endswith("\n") else ""
+        claude_md.write_text(contents + separator + "\n" + _CLAUDE_MD, encoding="utf-8")
+        click.echo(f"  appended jcode instructions → {claude_md}")
+    else:
+        claude_md.write_text(_CLAUDE_MD, encoding="utf-8")
+        click.echo(f"  wrote CLAUDE.md → {claude_md}")
 
 def _update_gitignore(repo: Path) -> None:
     """Add .jcode to .gitignore. Creates the file if it doesn't exist."""
