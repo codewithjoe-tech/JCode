@@ -348,15 +348,15 @@ def add(plugin: str) -> None:
 
     click.echo(f"Installing {plugin} …")
 
-    # Install directly from the GitHub repo via uv pip
+    # Install into the same Python environment that is running jcode
     result = subprocess.run(
-        ["uv", "pip", "install", f"git+{git_url}"],
+        [sys.executable, "-m", "pip", "install", f"git+{git_url}"],
         check=False,
     )
     if result.returncode != 0:
         raise click.ClickException(
             f"Installation failed. Try manually:\n"
-            f"  uv pip install git+{git_url}"
+            f"  pip install git+{git_url}"
         )
 
     click.echo(f"Done. '{plugin}' will auto-load for repos that use {plugin}.")
