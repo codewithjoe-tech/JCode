@@ -314,27 +314,49 @@ class GenericParser:
                     nodes.append(prov)
                     edges.append(Edge(source_id=cls_jnode.id, target_id=prov.id,
                                       edge_type=EdgeType.INHERITS))
-        # Pass 1b: variables — class attributes + module-level constants/globals.
-        # Runs after pass 1 so fn_node_map has all class nodes for parent lookup.
+        # Pass 1b: variables — module-level constants/globals + class attributes.
+        # Uses a direct AST walk instead of queries so it works across all
+        # tree-sitter-python versions (node type names are checked at runtime,
+        # not validated at query-parse time).
+        _ASSIGN_TYPES = frozenset({
+            "assignment", "annotated_assignment", "augmented_assignment"
+        })
         _VAR_SKIP = frozenset({"self", "cls"})
-        for _, capture_dict in all_matches:
-            for ts_var in capture_dict.get("variable", []):
-                name = _get_node_name(ts_var, src)
-                # Skip empty, dunder (__all__ etc.), very short, or noise names
-                if (not name or len(name) < 2
-                        or (name.startswith("__") and name.endswith("__"))
-                        or name in _VAR_SKIP):
+
+        def _extract_vars(block_ts_node, parent_jnode: Node) -> None:
+            for child in block_ts_node.children:
+                if child.type != "expression_statement":
                     continue
-                scope = _get_scope_parts(ts_var, mod_name, src, cfg)
-                title = _make_title(scope + [name])
-                parent_jnode = self._find_parent_jnode(ts_var, fn_node_map, mod_node)
-                node = _build_node(
-                    NodeType.VARIABLE, name, title, rel,
-                    ts_var.start_point[0] + 1, ts_var.end_point[0] + 1,
-                )
-                nodes.append(node)
-                edges.append(Edge(source_id=parent_jnode.id, target_id=node.id,
-                                  edge_type=EdgeType.DEFINES))
+                for inner in child.children:
+                    if inner.type not in _ASSIGN_TYPES:
+                        continue
+                    name = _get_node_name(inner, src)
+                    if (not name or len(name) < 2
+                            or (name.startswith("__") and name.endswith("__"))
+                            or name in _VAR_SKIP):
+                        continue
+                    scope = _get_scope_parts(inner, mod_name, src, cfg)
+                    title = _make_title(scope + [name])
+                    vnode = _build_node(
+                        NodeType.VARIABLE, name, title, rel,
+                        inner.start_point[0] + 1, inner.end_point[0] + 1,
+                    )
+                    nodes.append(vnode)
+                    edges.append(Edge(source_id=parent_jnode.id, target_id=vnode.id,
+                                      edge_type=EdgeType.DEFINES))
+
+        # Module-level: walk direct children of the root node
+        _extract_vars(tree.root_node, mod_node)
+
+        # Class bodies: for every class in fn_node_map, walk its body block
+        for _, capture_dict in all_matches:
+            for ts_cls in capture_dict.get("class", []):
+                cls_jnode = fn_node_map.get(ts_cls.id)
+                if cls_jnode is None:
+                    continue
+                body = ts_cls.child_by_field_name("body")
+                if body is not None:
+                    _extract_vars(body, cls_jnode)
 
         # Pass 2: calls (fn_node_map is now fully populated)
         for _, capture_dict in all_matches:
