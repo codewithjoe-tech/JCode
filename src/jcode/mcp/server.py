@@ -26,13 +26,21 @@ mcp = FastMCP("jcode")
 
 _JCODE_DIR_ENV = "JCODE_DIR"
 
+# Module-level cache: keyed by resolved path string so multiple repos can
+# coexist in the same process, but the common case (one repo) pays the
+# SQLite connection + DDL cost exactly once per server lifetime.
+_graph_cache: dict[str, GraphDB] = {}
+
 def _open_graph(jcode_dir: str | None) -> GraphDB:
-    path = Path(jcode_dir or os.environ.get(_JCODE_DIR_ENV, ".jcode"))
-    if not path.exists():
-        raise FileNotFoundError(
-            f"jcode store not found at '{path}'. Run `jcode index <repo>` first."
-        )
-    return GraphDB(path)
+    path = Path(jcode_dir or os.environ.get(_JCODE_DIR_ENV, ".jcode")).resolve()
+    key  = str(path)
+    if key not in _graph_cache:
+        if not path.exists():
+            raise FileNotFoundError(
+                f"jcode store not found at '{path}'. Run `jcode index <repo>` first."
+            )
+        _graph_cache[key] = GraphDB(path)
+    return _graph_cache[key]
 
 def _node_dict(n: Node) -> dict[str, Any]:
     return {
@@ -213,8 +221,11 @@ def jcode_index(
         jcode_dir:    Override .jcode store location.
     """
     from jcode.indexer.plugins import build_parser
-    jcode_path = Path(jcode_dir or os.path.join(repo_path, ".jcode"))
+    jcode_path = Path(jcode_dir or os.path.join(repo_path, ".jcode")).resolve()
     jcode_path.mkdir(parents=True, exist_ok=True)
+
+    # Evict from cache so the next tool call picks up the fresh index
+    _graph_cache.pop(str(jcode_path), None)
 
     store    = ObjectStore(jcode_path)
     graph    = GraphDB(jcode_path)

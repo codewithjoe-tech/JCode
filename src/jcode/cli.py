@@ -246,9 +246,7 @@ def setup_mcp(repo: str, jcode_dir: str | None) -> None:
 
     click.echo("\nRun this command once to register jcode with Claude Code:\n")
     click.echo(
-        f"  claude mcp add jcode \\\n"
-        f"    -e JCODE_DIR={jcode_path} \\\n"
-        f"    -- jcode serve\n"
+        f'  claude mcp add jcode jcode serve -e "JCODE_DIR={jcode_path}"\n'
     )
     click.echo("Then open Claude Code in this repo and ask it anything — it will")
     click.echo("call jcode_feature_map() before touching any files.\n")

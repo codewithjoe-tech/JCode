@@ -121,18 +121,21 @@ class Embedder:
     def __init__(self) -> None:
         self._backend: str | None = None   # "fastembed" | "sentence_transformers" | None
         self._model = None
+        self._available: bool | None = None  # cached availability check
 
     def is_available(self) -> bool:
+        if self._available is not None:
+            return self._available
         try:
             import fastembed  # noqa: F401
-            return True
+            self._available = True
         except ImportError:
-            pass
-        try:
-            import sentence_transformers  # noqa: F401
-            return True
-        except ImportError:
-            return False
+            try:
+                import sentence_transformers  # noqa: F401
+                self._available = True
+            except ImportError:
+                self._available = False
+        return self._available
 
     def _load(self) -> None:
         if self._model is not None:

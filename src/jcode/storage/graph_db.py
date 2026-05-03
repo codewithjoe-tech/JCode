@@ -279,7 +279,7 @@ class GraphDB(GraphReaderPort, GraphWriterPort):
         scope: str | None = None,
     ) -> list[tuple[Node, float]]:
         """
-        Cosine similarity search over stored embeddings.
+        Cosine similarity search over stored embeddings (numpy-accelerated).
         scope: file_path prefix filter, e.g. "comments/" — None means full graph.
         Returns list of (Node, score) sorted by score descending.
         """
@@ -296,19 +296,54 @@ class GraphDB(GraphReaderPort, GraphWriterPort):
                 "SELECT node_id, vector, dims FROM node_embeddings"
             ).fetchall()
 
-        scored: list[tuple[float, str]] = []
-        for row in rows:
-            vec = _unpack_vector(row["vector"], row["dims"])
-            score = _cosine(query_vector, vec)
-            scored.append((score, row["node_id"]))
+        if not rows:
+            return []
 
-        scored.sort(reverse=True)
-        results = []
-        for score, nid in scored[:limit]:
-            node = self.get_node(NodeId(nid))
-            if node:
-                results.append((node, score))
-        return results
+        try:
+            import numpy as np
+            dims = rows[0]["dims"]
+            # Stack all vectors into one matrix (N, dims) — single allocation
+            matrix = np.frombuffer(
+                b"".join(r["vector"] for r in rows), dtype=np.float32
+            ).reshape(len(rows), dims)
+            q = np.array(query_vector, dtype=np.float32)
+            # Batch cosine similarity: dot(matrix, q) / (||row|| * ||q||)
+            norms = np.linalg.norm(matrix, axis=1) * (np.linalg.norm(q) + 1e-9) + 1e-9
+            scores = (matrix @ q) / norms
+            # Top-k via argpartition (O(n)) instead of full sort (O(n log n))
+            top_k = min(limit, len(rows))
+            if top_k == len(rows):
+                top_indices = np.argsort(scores)[::-1]
+            else:
+                top_indices = np.argpartition(scores, -top_k)[-top_k:]
+                top_indices = top_indices[np.argsort(scores[top_indices])[::-1]]
+            node_ids = [rows[int(i)]["node_id"] for i in top_indices]
+            top_scores = scores[top_indices].tolist()
+        except ImportError:
+            # Pure-Python fallback (no numpy installed)
+            scored: list[tuple[float, str]] = []
+            for row in rows:
+                vec = _unpack_vector(row["vector"], row["dims"])
+                scored.append((_cosine(query_vector, vec), row["node_id"]))
+            scored.sort(reverse=True)
+            node_ids = [nid for _, nid in scored[:limit]]
+            top_scores = [s for s, _ in scored[:limit]]
+
+        if not node_ids:
+            return []
+
+        # Batch-fetch all result nodes in ONE SQL query instead of N individual calls
+        placeholders = ",".join("?" * len(node_ids))
+        node_rows = self._conn.execute(
+            f"SELECT * FROM nodes WHERE id IN ({placeholders})", node_ids
+        ).fetchall()
+        node_map = {r["id"]: _row_to_node(r) for r in node_rows}
+
+        return [
+            (node_map[nid], float(score))
+            for nid, score in zip(node_ids, top_scores)
+            if nid in node_map
+        ]
 
     def embeddings_count(self) -> int:
         return self._conn.execute(
