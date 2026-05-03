@@ -89,10 +89,10 @@ class Indexer:
         snapshot = self._parse_and_persist(repo_root, abs_to_parse, existing_nodes,
                                            workers=workers)
 
-        # 8. Update manifest
-        for rel in to_parse:
-            if rel in current:
-                self._graph.put_file_hash(rel, current[rel])
+        # 8. Update manifest (single transaction)
+        self._graph.bulk_put_file_hashes(
+            {rel: current[rel] for rel in to_parse if rel in current}
+        )
 
         if to_parse or deleted_files:
             added   = len(new_files)
@@ -162,24 +162,39 @@ class Indexer:
                     bar.update(1)
 
         # Resolve calls against ALL known nodes (existing + newly parsed)
-        click.echo("  resolving edges …")
+        t0 = time.time()
+        click.echo(f"  resolving {len(all_edges):,} edges …", nl=False)
         all_known = {**existing_nodes, **new_nodes}
         resolved_edges, persisted_provisionals = self._resolve_calls(
             all_known, provisional_nodes, all_edges
         )
+        click.echo(f"  done ({time.time() - t0:.1f}s)")
 
-        # Persist real nodes first
-        click.echo("  writing graph …")
-        for node in new_nodes.values():
+        # Write object store blobs (content-addressable, fast, skips duplicates)
+        t1 = time.time()
+        all_real_nodes = list(new_nodes.values())
+        for node in all_real_nodes:
             self._store.put(node)
-            self._graph.upsert_node(node)
-        # Persist unresolved provisional stubs (e.g. cross-module view references)
-        for node in persisted_provisionals.values():
-            self._graph.upsert_node(node)
+
+        # Build valid edge set
         all_known_extended = {**all_known, **persisted_provisionals}
-        for edge in resolved_edges:
-            if edge.source_id in all_known_extended and edge.target_id in all_known_extended:
-                self._graph.upsert_edge(edge)
+        valid_edges = [
+            e for e in resolved_edges
+            if e.source_id in all_known_extended and e.target_id in all_known_extended
+        ]
+
+        n_nodes = len(all_real_nodes) + len(persisted_provisionals)
+        n_edges = len(valid_edges)
+        click.echo(
+            f"  writing {n_nodes:,} nodes + {n_edges:,} edges … ", nl=False
+        )
+
+        # Single-transaction bulk writes — dramatically faster than N individual commits
+        self._graph.bulk_upsert_nodes(all_real_nodes)
+        self._graph.bulk_upsert_nodes(list(persisted_provisionals.values()))
+        self._graph.bulk_upsert_edges(valid_edges)
+
+        click.echo(f"done ({time.time() - t1:.1f}s)")
 
         snapshot = self._make_snapshot(repo_root)
         self._graph.save_snapshot(snapshot)
@@ -187,12 +202,15 @@ class Indexer:
         # Embed new nodes — silently skipped if sentence-transformers not installed
         try:
             from jcode.indexer.embedder import embed_graph
-            click.echo("  embedding nodes …")
+            click.echo("  embedding nodes …", nl=False)
+            t2 = time.time()
             embedded = embed_graph(self._graph)
             if embedded:
-                click.echo(f"  embedded {embedded} nodes")
+                click.echo(f"  {embedded:,} nodes embedded ({time.time() - t2:.1f}s)")
+            else:
+                click.echo(" skipped")
         except Exception:
-            pass
+            click.echo(" skipped")
 
         return snapshot
     # Helpers

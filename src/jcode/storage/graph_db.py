@@ -164,6 +164,52 @@ class GraphDB(GraphReaderPort, GraphWriterPort):
                 (edge.source_id.hex, edge.target_id.hex, edge.edge_type),
             )
 
+    def bulk_upsert_nodes(self, nodes: list[Node]) -> None:
+        """Insert/update all nodes in a single transaction — O(1) commits."""
+        if not nodes:
+            return
+        sql = """
+            INSERT INTO nodes (id, node_type, name, title, file_path, line_start, line_end, signature)
+            VALUES (:id, :node_type, :name, :title, :file_path, :line_start, :line_end, :signature)
+            ON CONFLICT(id) DO UPDATE SET
+                title=excluded.title, signature=excluded.signature, line_end=excluded.line_end
+        """
+        with self._tx():
+            self._conn.executemany(sql, [
+                {
+                    "id": n.id.hex, "node_type": n.node_type.value,
+                    "name": n.name, "title": n.title,
+                    "file_path": n.file_path, "line_start": n.line_start,
+                    "line_end": n.line_end, "signature": n.signature,
+                }
+                for n in nodes
+            ])
+
+    def bulk_upsert_edges(self, edges: list[Edge]) -> None:
+        """Insert all edges in a single transaction — O(1) commits."""
+        if not edges:
+            return
+        with self._tx():
+            self._conn.executemany(
+                "INSERT OR IGNORE INTO edges (source_id, target_id, edge_type) VALUES (?,?,?)",
+                [(e.source_id.hex, e.target_id.hex, e.edge_type) for e in edges],
+            )
+
+    def bulk_put_file_hashes(self, hashes: dict[str, str]) -> None:
+        """Upsert all file hashes in a single transaction."""
+        if not hashes:
+            return
+        now = time.time()
+        with self._tx():
+            self._conn.executemany(
+                """INSERT INTO file_hashes (file_path, content_hash, indexed_at)
+                   VALUES (?, ?, ?)
+                   ON CONFLICT(file_path) DO UPDATE SET
+                       content_hash=excluded.content_hash,
+                       indexed_at=excluded.indexed_at""",
+                [(fp, ch, now) for fp, ch in hashes.items()],
+            )
+
     def save_snapshot(self, snapshot: IndexSnapshot) -> None:
         sql = """
             INSERT INTO snapshots (id,snapshot_hash,indexed_at,file_count,node_count,edge_count,root_path)
