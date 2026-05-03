@@ -358,6 +358,44 @@ class GenericParser:
                 if body is not None:
                     _extract_vars(body, cls_jnode)
 
+        # Pass 1c: reference edges — function/method → variable (attribute access).
+        # Iterative AST walk: every `obj.attr` access inside a function body that
+        # matches a known variable node name emits a REFERENCES edge.
+        # This makes blast_radius on config variables show every function that
+        # reads them — no false positives from local variables since we only
+        # match attribute access patterns, not bare name lookups.
+        var_name_index: dict[str, list] = {}
+        for n in nodes:
+            if n.node_type == NodeType.VARIABLE:
+                var_name_index.setdefault(n.name, []).append(n.id)
+
+        # Iterative walk — emit provisional REFERENCES edges for every
+        # attribute access (obj.attr) found inside a function body.
+        # Provisional nodes (file_path="<unresolved>") are resolved cross-file
+        # by builder._resolve_calls, which now includes VARIABLE in its index.
+        # Same pattern used for CALLS — consistent, no same-file-only limitation.
+        seen_refs: set[tuple] = set()   # (fn_id, attr_name) — avoid duplicates
+        stack = [(tree.root_node, None)]
+        while stack:
+            ts_node, fn_jnode = stack.pop()
+            jn = fn_node_map.get(ts_node.id)
+            if jn is not None and jn.node_type in (NodeType.FUNCTION, NodeType.METHOD):
+                fn_jnode = jn
+            if ts_node.type == "attribute" and fn_jnode is not None:
+                attr_field = ts_node.child_by_field_name("attribute")
+                if attr_field is not None:
+                    attr_name = _node_text(attr_field, src)
+                    key = (fn_jnode.id, attr_name)
+                    if len(attr_name) > 2 and key not in seen_refs:
+                        seen_refs.add(key)
+                        prov = _build_node(NodeType.VARIABLE, attr_name, attr_name,
+                                           "<unresolved>", 0, 0)
+                        nodes.append(prov)
+                        edges.append(Edge(source_id=fn_jnode.id, target_id=prov.id,
+                                          edge_type=EdgeType.REFERENCES))
+            for child in reversed(ts_node.children):
+                stack.append((child, fn_jnode))
+
         # Pass 2: calls (fn_node_map is now fully populated)
         for _, capture_dict in all_matches:
             for ts_call in capture_dict.get("call", []):

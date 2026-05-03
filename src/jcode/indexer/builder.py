@@ -177,7 +177,8 @@ class Indexer:
         """
         name_index: dict[str, list[NodeId]] = {}
         for node in all_nodes.values():
-            if node.node_type in (NodeType.FUNCTION, NodeType.METHOD, NodeType.CLASS):
+            if node.node_type in (NodeType.FUNCTION, NodeType.METHOD,
+                                  NodeType.CLASS, NodeType.VARIABLE):
                 name_index.setdefault(node.name, []).append(node.id)
 
         resolved: list[Edge] = []

@@ -15,11 +15,12 @@ class NodeType(str, Enum):
     VARIABLE = "variable"   # class attributes + module-level constants/globals
 
 class EdgeType(str, Enum):
-    DEFINES  = "defines"    # module -> function/class it defines
-    CALLS    = "calls"      # function -> function it calls
-    IMPORTS  = "imports"    # module -> module it imports
-    CONTAINS = "contains"   # class -> method it contains
-    INHERITS = "inherits"   # class -> parent class
+    DEFINES    = "defines"      # module -> function/class it defines
+    CALLS      = "calls"        # function -> function it calls
+    IMPORTS    = "imports"      # module -> module it imports
+    CONTAINS   = "contains"     # class -> method it contains
+    INHERITS   = "inherits"     # class -> parent class
+    REFERENCES = "references"   # function -> variable it reads (attribute access)
 
 @dataclass(frozen=True, slots=True)
 class NodeId:
