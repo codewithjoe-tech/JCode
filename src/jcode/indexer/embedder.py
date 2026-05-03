@@ -27,6 +27,8 @@ os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 warnings.filterwarnings("ignore", message=".*symlinks.*")
 warnings.filterwarnings("ignore", message=".*HF_TOKEN.*")
 warnings.filterwarnings("ignore", message=".*unauthenticated.*")
+warnings.filterwarnings("ignore", message=".*progress bars.*")
+warnings.filterwarnings("ignore", category=UserWarning, module="huggingface_hub")
 
 if TYPE_CHECKING:
     from jcode.domain.models import Node
