@@ -200,6 +200,18 @@ src/jcode/
 
 ---
 
+## Contributing
+
+Contributions are very welcome — bug fixes, new language support, framework plugins, performance improvements, or docs.
+
+- **New language**: install the tree-sitter grammar, add a `LangConfig` entry in `generic_parser.py`, drop a `.scm` query file in `indexer/queries/`
+- **New framework plugin**: implement `handled_names` and `handle_call`, register it in `indexer/plugins/`
+- **Bug or improvement**: open an issue or send a PR directly
+
+There's no bureaucracy — if it's useful and doesn't break existing behaviour, it gets merged.
+
+---
+
 ## License
 
 MIT — free to use, modify, distribute, and build commercial products on top of. See [LICENSE](LICENSE).
