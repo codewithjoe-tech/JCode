@@ -156,7 +156,11 @@ class Embedder:
         # Try fastembed first (ONNX — fast cold start, no PyTorch required)
         try:
             from fastembed import TextEmbedding
-            self._model = TextEmbedding(model_name=_FAST_MODEL, show_progress_bar=False)
+            self._model = TextEmbedding(
+                model_name=_FAST_MODEL,
+                show_progress_bar=False,
+                providers=["CPUExecutionProvider"],   # explicit CPU — no CUDA probe
+            )
             self._backend = "fastembed"
             click.echo("  Embedder: fastembed (CPU)")
             return

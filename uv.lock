@@ -585,6 +585,7 @@ dependencies = [
     { name = "fastembed" },
     { name = "mcp" },
     { name = "msgpack" },
+    { name = "onnxruntime" },
     { name = "tree-sitter" },
     { name = "tree-sitter-python" },
 ]
@@ -635,6 +636,7 @@ requires-dist = [
     { name = "fastembed", marker = "extra == 'embed'", specifier = ">=0.3" },
     { name = "mcp", specifier = ">=1.0" },
     { name = "msgpack", specifier = ">=1.1" },
+    { name = "onnxruntime", specifier = ">=1.25.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },
