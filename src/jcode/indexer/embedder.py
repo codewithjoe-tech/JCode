@@ -102,9 +102,14 @@ def build_embed_text(
         snippet = re.sub(r"#.*", "", snippet)          # remove comments
         snippet = re.sub(r'""".*?"""', "", snippet)    # remove docstrings
         snippet = re.sub(r"'''.*?'''", "", snippet)
-        snippet = snippet.strip()
+        # Strip type annotations and default values — compress class bodies so
+        # all field names fit (e.g. Settings.REFRESH_TOKEN_EXPIRE_DAYS won't
+        # be cut off by DB_HOST: str, DB_PORT: int … bloating the cap)
+        snippet = re.sub(r":\s*[\w\[\], |]+(\s*=\s*[^\s,)]+)?", "", snippet)
+        snippet = re.sub(r"=\s*[^\s,)]+", "", snippet)   # remaining defaults
+        snippet = re.sub(r"\s+", " ", snippet).strip()
         if snippet:
-            parts.append(snippet[:300])  # cap to avoid overloading the embedding
+            parts.append(snippet[:600])  # raised cap — field names are now compact
 
     return "  ".join(parts)
 # Embedder — tries fastembed (ONNX, fast) then falls back to sentence-transformers
