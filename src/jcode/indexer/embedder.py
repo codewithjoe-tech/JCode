@@ -205,6 +205,7 @@ def embed_graph(
                read and included in the embedding text for richer semantic signal
                (especially useful for config classes, constants, and settings).
     """
+    import click
     from jcode.domain.models import EdgeType
 
     if embedder is None:
@@ -228,26 +229,40 @@ def embed_graph(
     if already == len(nodes):
         return 0
 
-    # Build texts — share a file cache so each file is read exactly once
+    # Load ALL edges + nodes into memory once — avoids N×SQL queries
+    node_map = {n.id: n for n in nodes}
+    successors_map = graph.all_successors()   # {source_id_hex → [Edge]}
+
+    # Build embedding texts with progress
     file_cache: dict[str, list[str]] = {}
-    texts = []
-    for node in nodes:
-        callees = [
-            graph.get_node(e.target_id).name
-            for e in graph.successors(node.id)
-            if e.edge_type in CALL_TYPES
-            and graph.get_node(e.target_id) is not None
-        ]
-        source_lines = (
-            _read_source_snippet(node, repo_root, file_cache) if repo_root else None
-        )
-        texts.append(build_embed_text(node, callees, source_lines))
+    texts: list[str] = []
 
-    # Batch embed
+    with click.progressbar(
+        nodes,
+        label=f"  Building {len(nodes):,} embeddings",
+        show_eta=True,
+        show_percent=True,
+        bar_template="%(label)s  %(bar)s  %(info)s",
+        width=40,
+    ) as bar:
+        for node in bar:
+            callees = [
+                node_map[e.target_id].name
+                for e in successors_map.get(node.id.hex, [])
+                if e.edge_type in CALL_TYPES and e.target_id in node_map
+            ]
+            source_lines = (
+                _read_source_snippet(node, repo_root, file_cache) if repo_root else None
+            )
+            texts.append(build_embed_text(node, callees, source_lines))
+
+    # Batch embed (fastembed / sentence-transformers handle batching internally)
+    click.echo(f"  Running model on {len(texts):,} texts …", nl=False)
+    t0 = __import__("time").time()
     vectors = embedder.embed_batch(texts)
+    click.echo(f"  done ({__import__('time').time() - t0:.1f}s)")
 
-    # Store
-    for node, vector in zip(nodes, vectors, strict=False):
-        graph.put_embedding(node.id, vector)
+    # Bulk store — single transaction instead of N commits
+    graph.bulk_put_embeddings(list(zip([n.id for n in nodes], vectors, strict=False)))
 
     return len(nodes)

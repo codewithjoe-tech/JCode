@@ -318,6 +318,31 @@ class GraphDB(GraphReaderPort, GraphWriterPort):
                 (node_id.hex, _pack_vector(vector), len(vector), time.time()),
             )
 
+    def bulk_put_embeddings(self, items: list[tuple[NodeId, list[float]]]) -> None:
+        """Upsert all embeddings in a single transaction — O(1) commits."""
+        if not items:
+            return
+        now = time.time()
+        with self._tx():
+            self._conn.executemany(
+                """INSERT INTO node_embeddings (node_id, vector, dims, embedded_at)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(node_id) DO UPDATE SET
+                       vector=excluded.vector, dims=excluded.dims,
+                       embedded_at=excluded.embedded_at""",
+                [(nid.hex, _pack_vector(vec), len(vec), now) for nid, vec in items],
+            )
+
+    def all_successors(self) -> dict:
+        """Return {source_id → [Edge]} for the entire graph in one query."""
+        rows = self._conn.execute(
+            "SELECT source_id, target_id, edge_type FROM edges"
+        ).fetchall()
+        result: dict = {}
+        for r in rows:
+            result.setdefault(r["source_id"], []).append(_row_to_edge(r))
+        return result
+
     def search_semantic(
         self,
         query_vector: list[float],

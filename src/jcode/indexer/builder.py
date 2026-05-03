@@ -170,31 +170,35 @@ class Indexer:
         )
         click.echo(f"  done ({time.time() - t0:.1f}s)")
 
-        # Write object store blobs (content-addressable, fast, skips duplicates)
-        t1 = time.time()
-        all_real_nodes = list(new_nodes.values())
-        for node in all_real_nodes:
-            self._store.put(node)
-
         # Build valid edge set
         all_known_extended = {**all_known, **persisted_provisionals}
         valid_edges = [
             e for e in resolved_edges
             if e.source_id in all_known_extended and e.target_id in all_known_extended
         ]
-
+        all_real_nodes = list(new_nodes.values())
         n_nodes = len(all_real_nodes) + len(persisted_provisionals)
         n_edges = len(valid_edges)
-        click.echo(
-            f"  writing {n_nodes:,} nodes + {n_edges:,} edges … ", nl=False
-        )
 
-        # Single-transaction bulk writes — dramatically faster than N individual commits
+        # Object store blobs (content-addressable, skips if already exists)
+        t1 = time.time()
+        with click.progressbar(
+            all_real_nodes,
+            label=f"  Writing {n_nodes:,} nodes",
+            show_eta=True,
+            show_percent=True,
+            bar_template="%(label)s  %(bar)s  %(info)s",
+            width=40,
+        ) as bar:
+            for node in bar:
+                self._store.put(node)
+
+        # Single-transaction bulk DB writes — O(1) commits regardless of node count
+        click.echo(f"  Flushing {n_edges:,} edges to DB …", nl=False)
         self._graph.bulk_upsert_nodes(all_real_nodes)
         self._graph.bulk_upsert_nodes(list(persisted_provisionals.values()))
         self._graph.bulk_upsert_edges(valid_edges)
-
-        click.echo(f"done ({time.time() - t1:.1f}s)")
+        click.echo(f"  done ({time.time() - t1:.1f}s)")
 
         snapshot = self._make_snapshot(repo_root)
         self._graph.save_snapshot(snapshot)
