@@ -145,26 +145,49 @@ class Embedder:
         if self._model is not None:
             return
 
-        # Try fastembed first (ONNX — fast cold start, auto-uses GPU if available)
+        import logging
+        logging.getLogger("fastembed").setLevel(logging.ERROR)
+        logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
+        logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
+        logging.getLogger("transformers").setLevel(logging.ERROR)
+
+        import click
+
+        # Try fastembed (ONNX Runtime) — GPU first, CPU fallback
         try:
-            import logging
-            logging.getLogger("fastembed").setLevel(logging.ERROR)
-            logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
             from fastembed import TextEmbedding
-            self._model = TextEmbedding(model_name=_FAST_MODEL, show_progress_bar=False)
+            # Try GPU first; if CUDA isn't available the provider just falls through to CPU
+            try:
+                self._model = TextEmbedding(
+                    model_name=_FAST_MODEL,
+                    show_progress_bar=False,
+                    providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+                )
+                device_label = "GPU"
+            except Exception:
+                self._model = TextEmbedding(
+                    model_name=_FAST_MODEL,
+                    show_progress_bar=False,
+                    providers=["CPUExecutionProvider"],
+                )
+                device_label = "CPU"
             self._backend = "fastembed"
+            click.echo(f"  Embedder: fastembed ({device_label})")
             return
         except ImportError:
             pass
 
-        # Fall back to sentence-transformers (PyTorch — slower)
-        import logging
-        logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
-        logging.getLogger("transformers").setLevel(logging.ERROR)
-        logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
+        # Fall back to sentence-transformers (PyTorch — GPU auto-detected via torch)
+        try:
+            import torch
+            _device = "cuda" if torch.cuda.is_available() else "cpu"
+        except ImportError:
+            _device = "cpu"
+
         from sentence_transformers import SentenceTransformer
-        self._model = SentenceTransformer(_MODEL_NAME)
+        self._model = SentenceTransformer(_MODEL_NAME, device=_device)
         self._backend = "sentence_transformers"
+        click.echo(f"  Embedder: sentence-transformers ({_device.upper()})")
 
     def embed(self, text: str) -> list[float]:
         self._load()

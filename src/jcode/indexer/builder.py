@@ -180,18 +180,22 @@ class Indexer:
         n_nodes = len(all_real_nodes) + len(persisted_provisionals)
         n_edges = len(valid_edges)
 
-        # Object store blobs (content-addressable, skips if already exists)
+        # Object store blobs — parallel writes (each file is independent)
         t_blobs = time.time()
+        _blob_workers = min(16, len(all_real_nodes) or 1)
         with click.progressbar(
-            all_real_nodes,
+            length=len(all_real_nodes),
             label=f"  Blobs  {n_nodes:,} nodes",
             show_eta=True,
             show_percent=True,
             bar_template="%(label)s  %(bar)s  %(info)s",
             width=40,
         ) as bar:
-            for node in bar:
-                self._store.put(node)
+            with ThreadPoolExecutor(max_workers=_blob_workers) as ex:
+                futs = {ex.submit(self._store.put, node): node for node in all_real_nodes}
+                for fut in as_completed(futs):
+                    fut.result()   # re-raise any store error
+                    bar.update(1)
         click.echo(f"  blobs done ({time.time() - t_blobs:.1f}s)")
 
         # Single-transaction bulk DB writes — O(1) commits regardless of node count
