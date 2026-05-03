@@ -70,16 +70,34 @@ def build_embed_text(
     Build a rich text string for embedding from available node metadata.
     callee_names:  names of functions this node calls (from graph edges).
     source_lines:  raw source lines from the node's definition (optional).
+
+    Text built from (in order, use what's available):
+      1. all path components    — e.g. "partners mmb" (not just top-level folder)
+      2. full qualified title   — e.g. "partners.mmb.client.Client.__init__"
+      3. signature              — parameter names carry strong semantic signal
+      4. callee names           — what a function calls describes what it does
+      5. urls                   — full URLs from string literals, e.g. "https://mm-app-backend.mymoneybazaar.com"
+      6. source snippet         — richest signal for configs/constants with no callees
     """
     parts = []
 
-    # Feature area from folder name (e.g. "comments" from "comments/routes.py")
-    folder = Path(node.file_path).parts[0] if node.file_path else ""
-    if folder and folder not in (".", "src"):
-        parts.append(folder)
+    # All meaningful path components — e.g. "partners mmb" from "partners/mmb/client.py"
+    # Using only parts[0] previously caused sub-packages like "mmb" to be invisible
+    # to semantic search (everything in partners/* looked the same at folder level).
+    if node.file_path:
+        path_parts = [
+            p for p in Path(node.file_path).parts[:-1]  # exclude filename
+            if p not in (".", "src")
+        ]
+        if path_parts:
+            parts.append(" ".join(path_parts))
 
-    # Node type + name
-    parts.append(f"{node.node_type.value} {node.name}")
+    # Full qualified title (e.g. "partners.mmb.client.Client.__init__") — richer
+    # than just node.name ("__init__") since it encodes the entire module path.
+    if node.title and node.title != node.name:
+        parts.append(node.title)
+    else:
+        parts.append(f"{node.node_type.value} {node.name}")
 
     # Signature — parameter names are rich semantic signal
     if node.signature:
@@ -96,6 +114,16 @@ def build_embed_text(
                                                   "print", "len", "str", "int")]
         if filtered:
             parts.append(" ".join(filtered[:8]))
+
+    # URLs from string literals — included as-is so the full domain is searchable.
+    # e.g. 'https://mm-app-backend.mymoneybazaar.com' → "mm-app-backend.mymoneybazaar.com"
+    if source_lines:
+        _url_re = re.compile(r'https?://[^\s\'"\\]+')
+        urls = list(dict.fromkeys(
+            url for line in source_lines for url in _url_re.findall(line)
+        ))
+        if urls:
+            parts.append(" ".join(urls))
 
     # Source snippet — most important for classes/configs with no callees
     if source_lines:
