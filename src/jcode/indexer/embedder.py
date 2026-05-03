@@ -263,6 +263,9 @@ def embed_graph(
     node_map = {n.id: n for n in nodes}
     successors_map = graph.all_successors()   # {source_id_hex → [Edge]}
 
+    # Pre-load model now so the device message prints before the progress bar
+    embedder._load()
+
     # Build embedding texts
     file_cache: dict[str, list[str]] = {}
     texts: list[str] = []

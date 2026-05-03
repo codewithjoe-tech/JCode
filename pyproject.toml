@@ -1,6 +1,6 @@
 [project]
 name = "jcode"
-version = "0.3.2"
+version = "0.3.4"
 description = "Feature-graph code intelligence for AI agents — stop grepping, start graphing"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -29,6 +29,7 @@ dependencies = [
     "click>=8.1",
     "msgpack>=1.1",
     "mcp>=1.0",
+    "fastembed-gpu>=0.8.0",
 ]
 
 [project.urls]
@@ -45,7 +46,7 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.4",
 ]
-embed      = ["fastembed>=0.3"]
+embed      = ["fastembed-gpu>=0.3"]
 embed-slow = ["sentence-transformers>=2.7"]
 typescript = ["tree-sitter-typescript>=0.23"]
 javascript = ["tree-sitter-javascript>=0.23"]
@@ -58,7 +59,7 @@ all-langs  = [
     "tree-sitter-rust>=0.23",
 ]
 all = [
-    "fastembed>=0.3",
+    "fastembed-gpu>=0.3",
     "tree-sitter-typescript>=0.23",
     "tree-sitter-javascript>=0.23",
     "tree-sitter-go>=0.23",
