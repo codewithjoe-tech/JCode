@@ -12,6 +12,7 @@ class NodeType(str, Enum):
     FUNCTION = "function"
     METHOD   = "method"
     IMPORT   = "import"
+    VARIABLE = "variable"   # class attributes + module-level constants/globals
 
 class EdgeType(str, Enum):
     DEFINES  = "defines"    # module -> function/class it defines

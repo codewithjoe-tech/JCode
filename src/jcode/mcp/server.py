@@ -178,7 +178,7 @@ def jcode_feature_map(
     from jcode.domain.models import NodeType
     nodes = graph.all_nodes()
 
-    _SKIP = {NodeType.MODULE, NodeType.IMPORT}
+    _SKIP = {NodeType.MODULE, NodeType.IMPORT, NodeType.VARIABLE}
     feature_map: dict[str, dict] = {}
     for node in nodes:
         if node.node_type in _SKIP:

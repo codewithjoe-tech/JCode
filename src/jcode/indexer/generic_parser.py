@@ -314,6 +314,28 @@ class GenericParser:
                     nodes.append(prov)
                     edges.append(Edge(source_id=cls_jnode.id, target_id=prov.id,
                                       edge_type=EdgeType.INHERITS))
+        # Pass 1b: variables — class attributes + module-level constants/globals.
+        # Runs after pass 1 so fn_node_map has all class nodes for parent lookup.
+        _VAR_SKIP = frozenset({"self", "cls"})
+        for _, capture_dict in all_matches:
+            for ts_var in capture_dict.get("variable", []):
+                name = _get_node_name(ts_var, src)
+                # Skip empty, dunder (__all__ etc.), very short, or noise names
+                if (not name or len(name) < 2
+                        or (name.startswith("__") and name.endswith("__"))
+                        or name in _VAR_SKIP):
+                    continue
+                scope = _get_scope_parts(ts_var, mod_name, src, cfg)
+                title = _make_title(scope + [name])
+                parent_jnode = self._find_parent_jnode(ts_var, fn_node_map, mod_node)
+                node = _build_node(
+                    NodeType.VARIABLE, name, title, rel,
+                    ts_var.start_point[0] + 1, ts_var.end_point[0] + 1,
+                )
+                nodes.append(node)
+                edges.append(Edge(source_id=parent_jnode.id, target_id=node.id,
+                                  edge_type=EdgeType.DEFINES))
+
         # Pass 2: calls (fn_node_map is now fully populated)
         for _, capture_dict in all_matches:
             for ts_call in capture_dict.get("call", []):

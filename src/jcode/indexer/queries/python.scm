@@ -15,3 +15,11 @@
 
 ; All call expressions
 (call) @call
+
+; Module-level variable assignments (globals / constants)
+(module (expression_statement (assignment) @variable))
+(module (expression_statement (annotated_assignment) @variable))
+
+; Class-body attribute assignments (Pydantic fields, dataclass fields, settings)
+(class_definition body: (block (expression_statement (assignment) @variable)))
+(class_definition body: (block (expression_statement (annotated_assignment) @variable)))
