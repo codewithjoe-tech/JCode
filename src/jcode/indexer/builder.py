@@ -3,6 +3,7 @@
 import hashlib
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from jcode.domain.models import Edge, IndexSnapshot, Node, NodeId, NodeType
@@ -22,7 +23,8 @@ class Indexer:
         self._store = object_store
         self._graph = graph_writer
     # Public entry point
-    def index(self, repo_root: str, *, full_reindex: bool = False) -> IndexSnapshot:
+    def index(self, repo_root: str, *, full_reindex: bool = False,
+              workers: int = 4) -> IndexSnapshot:
         """
         Index *repo_root*.
 
@@ -37,12 +39,16 @@ class Indexer:
         # Both paths funnel through _incremental.
         # After clear(), the manifest is empty so every file is "new" —
         # that gives us a correct full rebuild while still writing the manifest.
-        return self._incremental(repo_root)
+        return self._incremental(repo_root, workers=workers)
     # Incremental core
-    def _incremental(self, repo_root: str) -> IndexSnapshot:
+    def _incremental(self, repo_root: str, *, workers: int = 4) -> IndexSnapshot:
+        import click
+
         # 1. Scan current files → sha256(content)
         current: dict[str, str] = {}   # rel_path → hash
         abs_map:  dict[str, str] = {}   # rel_path → abs_path
+
+        print("  scanning files …", end="\r", flush=True)
         for abs_path in self._discover_files(repo_root):
             try:
                 raw = Path(abs_path).read_bytes()
@@ -51,6 +57,8 @@ class Indexer:
             rel = os.path.relpath(abs_path, repo_root)
             current[rel] = hashlib.sha256(raw).hexdigest()
             abs_map[rel]  = abs_path
+        # clear the \r line
+        print(f"  scanned {len(current)} files              ")
 
         # 2. Load stored manifest
         stored: dict[str, str] = self._graph.get_file_hashes()
@@ -70,7 +78,7 @@ class Indexer:
         if not to_parse and not deleted_files:
             snap = self._graph.get_snapshot()
             if snap:
-                print("  nothing changed — index is up to date")
+                click.echo("  nothing changed — index is up to date")
                 return snap
 
         # 6. Load existing nodes for cross-file call resolution
@@ -78,7 +86,8 @@ class Indexer:
 
         # 7. Parse new / changed files
         abs_to_parse = {abs_map[r] for r in to_parse if r in abs_map}
-        snapshot = self._parse_and_persist(repo_root, abs_to_parse, existing_nodes)
+        snapshot = self._parse_and_persist(repo_root, abs_to_parse, existing_nodes,
+                                           workers=workers)
 
         # 8. Update manifest
         for rel in to_parse:
@@ -90,7 +99,7 @@ class Indexer:
             changed = len(changed_files)
             deleted = len(deleted_files)
             if added or changed or deleted:
-                print(f"  incremental: +{added} new, ~{changed} changed, -{deleted} deleted")
+                click.echo(f"  incremental: +{added} new, ~{changed} changed, -{deleted} deleted")
 
         return snapshot
     # Parsing + persistence (shared by every run)
@@ -99,31 +108,68 @@ class Indexer:
         repo_root: str,
         files_to_parse: set[str],
         existing_nodes: dict[NodeId, Node],
+        *,
+        workers: int = 4,
     ) -> IndexSnapshot:
+        import click
+
         new_nodes: dict[NodeId, Node] = {}
         provisional_nodes: dict[NodeId, Node] = {}
         all_edges: list[Edge] = []
 
-        for abs_path in files_to_parse:
+        files_list = sorted(files_to_parse)
+        total = len(files_list)
+
+        def _parse_one(abs_path: str) -> tuple[list[Node], list[Edge]]:
             try:
                 source = Path(abs_path).read_text(encoding="utf-8", errors="replace")
             except OSError:
-                continue
-            nodes, edges = self._parser.parse_file(abs_path, source, repo_root)
-            for node in nodes:
-                if node.file_path == "<unresolved>":
-                    provisional_nodes[node.id] = node
-                else:
-                    new_nodes[node.id] = node
-            all_edges.extend(edges)
+                return [], []
+            return self._parser.parse_file(abs_path, source, repo_root)
+
+        label = f"  Parsing {total} file{'s' if total != 1 else ''}"
+        effective_workers = min(workers, total) if total else 1
+
+        with click.progressbar(
+            length=total,
+            label=label,
+            show_eta=True,
+            show_percent=True,
+            bar_template="%(label)s  %(bar)s  %(info)s",
+            width=40,
+        ) as bar:
+            if effective_workers > 1:
+                with ThreadPoolExecutor(max_workers=effective_workers) as executor:
+                    futures = {executor.submit(_parse_one, f): f for f in files_list}
+                    for future in as_completed(futures):
+                        nodes, edges = future.result()
+                        for node in nodes:
+                            if node.file_path == "<unresolved>":
+                                provisional_nodes[node.id] = node
+                            else:
+                                new_nodes[node.id] = node
+                        all_edges.extend(edges)
+                        bar.update(1)
+            else:
+                for abs_path in files_list:
+                    nodes, edges = _parse_one(abs_path)
+                    for node in nodes:
+                        if node.file_path == "<unresolved>":
+                            provisional_nodes[node.id] = node
+                        else:
+                            new_nodes[node.id] = node
+                    all_edges.extend(edges)
+                    bar.update(1)
 
         # Resolve calls against ALL known nodes (existing + newly parsed)
+        click.echo("  resolving edges …")
         all_known = {**existing_nodes, **new_nodes}
         resolved_edges, persisted_provisionals = self._resolve_calls(
             all_known, provisional_nodes, all_edges
         )
 
         # Persist real nodes first
+        click.echo("  writing graph …")
         for node in new_nodes.values():
             self._store.put(node)
             self._graph.upsert_node(node)
@@ -141,9 +187,10 @@ class Indexer:
         # Embed new nodes — silently skipped if sentence-transformers not installed
         try:
             from jcode.indexer.embedder import embed_graph
+            click.echo("  embedding nodes …")
             embedded = embed_graph(self._graph)
             if embedded:
-                print(f"  embedded {embedded} nodes")
+                click.echo(f"  embedded {embedded} nodes")
         except Exception:
             pass
 

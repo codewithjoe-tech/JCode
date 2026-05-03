@@ -167,7 +167,9 @@ def init(repo: str, jcode_dir: str | None, no_claude_md: bool) -> None:
 @click.option("--jcode-dir", default=None, help="Override .jcode location.")
 @click.option("--full", is_flag=True, default=False,
               help="Drop and rebuild the entire graph.")
-def index(repo: str, jcode_dir: str | None, full: bool) -> None:
+@click.option("--workers", "-j", default=4, show_default=True,
+              help="Parallel workers for file parsing. Use 1 to disable parallelism.")
+def index(repo: str, jcode_dir: str | None, full: bool, workers: int) -> None:
     """Index a repository into the feature graph (incremental by default)."""
     jcode_path = _resolve_jcode_dir(repo, jcode_dir)
     jcode_path.mkdir(parents=True, exist_ok=True)
@@ -178,7 +180,7 @@ def index(repo: str, jcode_dir: str | None, full: bool) -> None:
     indexer = Indexer(parser, store, graph)
 
     click.echo(f"Indexing {repo} …")
-    snapshot = indexer.index(repo, full_reindex=full)
+    snapshot = indexer.index(repo, full_reindex=full, workers=workers)
 
     click.echo(
         f"Done — {snapshot.file_count} files  "
