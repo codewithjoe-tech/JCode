@@ -153,41 +153,21 @@ class Embedder:
 
         import click
 
-        # Try fastembed (ONNX Runtime) — GPU first, CPU fallback
+        # Try fastembed first (ONNX — fast cold start, no PyTorch required)
         try:
             from fastembed import TextEmbedding
-            # Try GPU first; if CUDA isn't available the provider just falls through to CPU
-            try:
-                self._model = TextEmbedding(
-                    model_name=_FAST_MODEL,
-                    show_progress_bar=False,
-                    providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
-                )
-                device_label = "GPU"
-            except Exception:
-                self._model = TextEmbedding(
-                    model_name=_FAST_MODEL,
-                    show_progress_bar=False,
-                    providers=["CPUExecutionProvider"],
-                )
-                device_label = "CPU"
+            self._model = TextEmbedding(model_name=_FAST_MODEL, show_progress_bar=False)
             self._backend = "fastembed"
-            click.echo(f"  Embedder: fastembed ({device_label})")
+            click.echo("  Embedder: fastembed (CPU)")
             return
         except ImportError:
             pass
 
-        # Fall back to sentence-transformers (PyTorch — GPU auto-detected via torch)
-        try:
-            import torch
-            _device = "cuda" if torch.cuda.is_available() else "cpu"
-        except ImportError:
-            _device = "cpu"
-
+        # Fall back to sentence-transformers (PyTorch)
         from sentence_transformers import SentenceTransformer
-        self._model = SentenceTransformer(_MODEL_NAME, device=_device)
+        self._model = SentenceTransformer(_MODEL_NAME)
         self._backend = "sentence_transformers"
-        click.echo(f"  Embedder: sentence-transformers ({_device.upper()})")
+        click.echo("  Embedder: sentence-transformers (CPU)")
 
     def embed(self, text: str) -> list[float]:
         self._load()
