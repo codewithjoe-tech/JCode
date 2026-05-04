@@ -31,6 +31,7 @@ class LangConfig:
     func_types: frozenset     # AST node types that represent functions/methods
     class_types: frozenset    # AST node types that represent classes/structs
     root_types: frozenset     # AST node types that mark the top-level scope boundary
+    language_fn: str = "language"  # function name to call on the module to get Language
 
 _CONFIGS: list[LangConfig] = [
     LangConfig(
@@ -40,13 +41,24 @@ _CONFIGS: list[LangConfig] = [
         class_types=frozenset({"class_definition"}),
         root_types=frozenset({"module"}),
     ),
+    # tree_sitter_typescript exposes language_typescript() and language_tsx() separately
     LangConfig(
         name="typescript", module_name="tree_sitter_typescript", query_file="typescript.scm",
-        extensions=frozenset({".ts", ".tsx"}),
+        extensions=frozenset({".ts"}),
         func_types=frozenset({"function_declaration", "method_definition", "function",
                                "generator_function_declaration", "arrow_function"}),
         class_types=frozenset({"class_declaration", "interface_declaration"}),
         root_types=frozenset({"program"}),
+        language_fn="language_typescript",
+    ),
+    LangConfig(
+        name="tsx", module_name="tree_sitter_typescript", query_file="typescript.scm",
+        extensions=frozenset({".tsx"}),
+        func_types=frozenset({"function_declaration", "method_definition", "function",
+                               "generator_function_declaration", "arrow_function"}),
+        class_types=frozenset({"class_declaration", "interface_declaration"}),
+        root_types=frozenset({"program"}),
+        language_fn="language_tsx",
     ),
     LangConfig(
         name="javascript", module_name="tree_sitter_javascript", query_file="javascript.scm",
@@ -223,7 +235,7 @@ class GenericParser:
             return None
         try:
             mod = importlib.import_module(cfg.module_name)
-            lang = Language(mod.language())
+            lang = Language(getattr(mod, cfg.language_fn)())
             query_text = (QUERIES_DIR / cfg.query_file).read_text()
             query = Query(lang, query_text)
             parser = Parser(lang)
