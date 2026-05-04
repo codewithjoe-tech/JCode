@@ -17,7 +17,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from jcode.domain.models import BlastRadiusResult, Node, NodeId, TraversalResult
-from jcode.graph.traversal import GraphTraversal, search_semantic
+from jcode.graph.traversal import GraphTraversal, search_semantic, _fp_root
 from jcode.indexer.builder import Indexer
 from jcode.storage.graph_db import GraphDB
 from jcode.storage.object_store import ObjectStore
@@ -179,30 +179,40 @@ def jcode_feature_map(
     nodes = graph.all_nodes()
 
     _SKIP = {NodeType.MODULE, NodeType.IMPORT, NodeType.VARIABLE}
+    # Cap per-folder lists so the response stays a usable overview rather than
+    # a full symbol dump. Claude should use jcode_search with scope= to drill in.
+    _MAX_PER_TYPE = 20
+
     feature_map: dict[str, dict] = {}
     for node in nodes:
         if node.node_type in _SKIP:
             continue
-        folder = node.file_path.split("/")[0] if "/" in node.file_path else "root"
+        folder = _fp_root(node.file_path)
         if folder not in feature_map:
-            feature_map[folder] = {"classes": [], "functions": [], "methods": []}
+            feature_map[folder] = {"classes": set(), "functions": set(), "methods": set()}
         if node.node_type == NodeType.CLASS:
-            feature_map[folder]["classes"].append(node.name)
+            feature_map[folder]["classes"].add(node.name)
         elif node.node_type == NodeType.FUNCTION:
-            feature_map[folder]["functions"].append(node.name)
+            feature_map[folder]["functions"].add(node.name)
         elif node.node_type == NodeType.METHOD:
-            feature_map[folder]["methods"].append(node.name)
+            feature_map[folder]["methods"].add(node.name)
 
-    # Deduplicate and sort
-    for folder in feature_map:
-        for key in feature_map[folder]:
-            feature_map[folder][key] = sorted(set(feature_map[folder][key]))
+    # Sort, cap, and convert sets to lists
+    summary: dict[str, dict] = {}
+    for folder, buckets in sorted(feature_map.items()):
+        summary[folder] = {}
+        for key, names in buckets.items():
+            sorted_names = sorted(names)
+            summary[folder][f"{key}_count"] = len(sorted_names)
+            summary[folder][key] = sorted_names[:_MAX_PER_TYPE]
+            if len(sorted_names) > _MAX_PER_TYPE:
+                summary[folder][key].append(f"… +{len(sorted_names) - _MAX_PER_TYPE} more")
 
     return {
-        "folders": feature_map,
+        "folders": summary,
         "hint": (
-            "Use folder names as scope in jcode_search and jcode_context. "
-            "If the user's request mentions a feature area, pass that folder as scope."
+            "Each folder is a feature area. Lists are capped at 20 — use jcode_search "
+            "with scope=<folder> to find specific symbols within a folder."
         ),
     }
 

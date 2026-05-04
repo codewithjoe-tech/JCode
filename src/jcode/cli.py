@@ -58,13 +58,29 @@ SQLite graph of every function, class, method, and module, with typed edges
 
 ## Rules
 
-- NEVER call grep / ripgrep / find to locate code. Use `jcode_search`.
+- NEVER use grep/ripgrep to locate a function, class, or feature. Use `jcode_search`.
 - NEVER read a file just to understand its structure. Use `jcode_context`.
 - ALWAYS call `jcode_blast_radius` before editing a function.
 - Pass `scope=<folder>` when the user's request clearly names a feature area
   (e.g. "in the comments module", "fix the auth flow").
 - If scoped search returns nothing, jcode automatically falls back to the
   full graph — you do not need to retry manually.
+
+## When grep IS the right tool
+
+Use grep (or ripgrep `rg`) directly — without going through jcode — when you
+are looking for an **exact string literal** that does not correspond to a
+code symbol. jcode indexes identifiers and call graphs; it does not index
+arbitrary string values inside code.
+
+Good grep targets (jcode will NOT find these reliably):
+- A URL or base URL string:  `rg "mymoneybazaar.com"`
+- A hard-coded API key name: `rg "X-Api-Key"`
+- A Django URL pattern:      `rg "path.*login"`
+- A specific error message:  `rg "Invalid OTP"`
+- A config value or secret:  `rg "REDIS_HOST"`
+
+Use jcode for everything else — structure, behaviour, and relationships.
 
 ## Tool reference
 

@@ -10,6 +10,7 @@ blast_radius() is always global — impact doesn't respect folder boundaries.
 """
 
 from collections import deque
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from jcode.domain.models import (
     BlastRadiusResult,
@@ -18,6 +19,32 @@ from jcode.domain.models import (
     TraversalResult,
 )
 from jcode.domain.ports import GraphReaderPort, TraversalPort
+
+
+def _fp_parts(file_path: str) -> tuple[str, ...]:
+    """
+    Split a node file_path into components regardless of OS separator.
+    Stored paths may use / (Linux/Mac) or \\ (Windows) depending on where
+    the index was built. We normalise before splitting so traversal and
+    scope checks work correctly on any platform.
+    """
+    return Path(file_path.replace("\\", "/")).parts
+
+
+def _fp_root(file_path: str) -> str:
+    """Return the top-level folder of a file path, cross-platform."""
+    parts = _fp_parts(file_path)
+    return parts[0] if parts else "root"
+
+
+def _fp_in_scope(file_path: str, scope: str) -> bool:
+    """
+    Return True if file_path is inside scope (a folder prefix).
+    Normalises both sides so / and \\ both work.
+    """
+    norm_path  = file_path.replace("\\", "/")
+    norm_scope = scope.rstrip("/\\")
+    return norm_path.startswith(norm_scope + "/")
 
 
 class GraphTraversal(TraversalPort):
@@ -105,8 +132,8 @@ class GraphTraversal(TraversalPort):
             if target is None:
                 continue
 
-            # Scope boundary check
-            if scope and not target.file_path.startswith(scope.rstrip("/") + "/"):
+            # Scope boundary check — normalised for / and \ separators
+            if scope and not _fp_in_scope(target.file_path, scope):
                 # External dependency — flag it, don't follow
                 if target not in result.external_deps:
                     result.external_deps.append(target)
@@ -127,8 +154,8 @@ class GraphTraversal(TraversalPort):
             score -= 0.20
             reasons.append(f"High fan-in: {len(affected)} callers/dependents will be affected.")
 
-        changed_module = changed.file_path.split("/")[0]
-        cross = [n for n in affected if n.file_path.split("/")[0] != changed_module]
+        changed_module = _fp_root(changed.file_path)
+        cross = [n for n in affected if _fp_root(n.file_path) != changed_module]
         if cross:
             score -= 0.10
             names = ", ".join(n.title for n in cross[:3])

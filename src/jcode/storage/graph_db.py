@@ -164,19 +164,38 @@ class GraphDB(GraphReaderPort, GraphWriterPort):
         self._migrate()
 
     def _migrate(self) -> None:
-        """Apply schema migrations for databases created before keywords support."""
-        cols = {r[1] for r in self._conn.execute("PRAGMA table_info(nodes)").fetchall()}
+        """
+        Apply schema migrations idempotently using a schema_version key in meta.
 
-        # Step 1 — add keywords column to nodes if missing
+        Version history:
+          1 — baseline (no keywords)
+          2 — added keywords column + FTS rebuild
+
+        The FTS rebuild (version 2) is expensive on large repos — it scans all
+        nodes and rewrites the B-tree index. We gate it behind a version check
+        so it only runs once, not on every DB open.
+        """
+        # Read current schema version (missing key → version 0)
+        row = self._conn.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'"
+        ).fetchone()
+        version = int(row["value"]) if row else 0
+
+        if version >= 2:
+            return  # already up to date — fast path, no work done
+
+        # v1 → v2: add keywords column + rebuild FTS to include it
+        cols = {r[1] for r in self._conn.execute("PRAGMA table_info(nodes)").fetchall()}
         if "keywords" not in cols:
             try:
-                self._conn.execute("ALTER TABLE nodes ADD COLUMN keywords TEXT NOT NULL DEFAULT ''")
+                self._conn.execute(
+                    "ALTER TABLE nodes ADD COLUMN keywords TEXT NOT NULL DEFAULT ''"
+                )
                 self._conn.commit()
             except sqlite3.OperationalError:
-                pass  # already exists — race or concurrent open
+                pass  # already exists — concurrent open
 
-        # Step 2 — rebuild FTS to include keywords if it's missing that column
-        fts_cols = set()
+        fts_cols: set[str] = set()
         try:
             fts_cols = {r[2] for r in self._conn.execute("PRAGMA table_info(nodes_fts)").fetchall()}
         except sqlite3.OperationalError:
@@ -184,7 +203,13 @@ class GraphDB(GraphReaderPort, GraphWriterPort):
 
         if "keywords" not in fts_cols:
             self._conn.executescript(_MIGRATION_FTS_KEYWORDS)
-            self._conn.commit()
+
+        # Record new version — skip migration on all future opens
+        self._conn.execute(
+            "INSERT INTO meta (key, value) VALUES ('schema_version', '2') "
+            "ON CONFLICT(key) DO UPDATE SET value = '2'"
+        )
+        self._conn.commit()
 
     @contextmanager
     def _tx(self):
