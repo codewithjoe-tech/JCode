@@ -195,6 +195,24 @@ def search_entry_points(
         # Nothing found in scope — expand to full graph
     return reader.search_nodes(query, limit=limit)
 
+def _exact_boost(node: Node, query: str) -> float:
+    """
+    Return a score bonus for nodes whose name/title closely matches the query.
+    Exact name match → 0.3 bonus.  Prefix match → 0.15.  Substring → 0.05.
+    This pushes the right symbol to the top when multiple nodes share a name.
+    """
+    q = query.strip().lower()
+    name  = node.name.lower()
+    title = node.title.lower()
+    if name == q or title == q:
+        return 0.30
+    if name.startswith(q) or title.startswith(q):
+        return 0.15
+    if q in name or q in title:
+        return 0.05
+    return 0.0
+
+
 def search_semantic(
     reader,
     query: str,
@@ -202,21 +220,22 @@ def search_semantic(
     scope: str | None = None,
 ) -> list[tuple[Node, float]]:
     """
-    Hybrid search: FTS keyword match first, then semantic vector search.
+    Hybrid search: FTS keyword match + semantic vector search + exact-name boost.
 
-    FTS runs first so exact tokens (e.g. a partner domain name like
-    "mymoneybazaar") are always found even when the semantic score is low.
-    Semantic results fill the remaining slots, deduplicated against FTS hits.
+    Pass 1 — FTS: exact token matches (symbol names, URL domains, config strings).
+    Pass 2 — Semantic: fills remaining slots when FTS misses conceptual queries.
+    Pass 3 — Boost: nodes whose name/title closely match the query are pushed up.
+
     Falls back to FTS-only if embeddings aren't available.
     """
     from jcode.indexer.embedder import get_embedder
 
-    # --- FTS pass (always runs) ---
+    # --- Pass 1: FTS ---
     fts_nodes = search_entry_points(reader, query, limit=limit, scope=scope)
     fts_ids = {n.id.hex for n in fts_nodes}
     results: list[tuple[Node, float]] = [(n, 1.0) for n in fts_nodes]
 
-    # --- Semantic pass (fills remaining slots) ---
+    # --- Pass 2: Semantic (fills remaining slots) ---
     embedder = get_embedder()
     if embedder.is_available() and reader.embeddings_count() > 0:
         query_vec = embedder.embed(query)
@@ -225,5 +244,11 @@ def search_semantic(
             if node.id.hex not in fts_ids:
                 results.append((node, score))
 
-    # Return up to `limit` results, FTS hits first
-    return results[:limit]
+    # --- Pass 3: Exact-name boost + re-sort ---
+    boosted = [
+        (node, min(1.0, score + _exact_boost(node, query)))
+        for node, score in results
+    ]
+    boosted.sort(key=lambda x: x[1], reverse=True)
+
+    return boosted[:limit]

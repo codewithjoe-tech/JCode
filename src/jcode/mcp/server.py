@@ -3,11 +3,11 @@ MCP server — exposes jcode as five tools any AI agent can call.
 
 Tools
 -----
-jcode_search        semantic + keyword search → candidate entry points
+jcode_search        semantic + keyword search → candidate entry points + inline snippets
 jcode_context       DFS forward with optional scope → code context
 jcode_blast_radius  BFS reverse (always global) → impact analysis
 jcode_feature_map   folder-level overview of the codebase
-jcode_index         trigger a (re-)index of a directory
+jcode_index         trigger a (re-)index of one or more directories
 """
 
 import os
@@ -42,6 +42,35 @@ def _open_graph(jcode_dir: str | None) -> GraphDB:
         _graph_cache[key] = GraphDB(path)
     return _graph_cache[key]
 
+# Snippet helper — reads source lines for a node inline, avoiding a separate Read call.
+_SNIPPET_LINES = 12   # max lines returned per node
+
+def _read_snippet(
+    node: Node,
+    repo_root: str,
+    file_cache: dict[str, list[str]],
+) -> str:
+    """
+    Return up to _SNIPPET_LINES of source starting at node.line_start.
+    Uses file_cache to avoid re-reading the same file for multiple nodes.
+    Returns empty string silently on any IO error.
+    """
+    try:
+        # Normalise separator so Windows-stored paths resolve on any OS
+        rel = node.file_path.replace("\\", "/")
+        if rel not in file_cache:
+            file_cache[rel] = (
+                Path(repo_root, rel)
+                .read_text(encoding="utf-8", errors="replace")
+                .splitlines()
+            )
+        lines = file_cache[rel]
+        start = max(0, node.line_start - 1)
+        end   = min(len(lines), start + _SNIPPET_LINES)
+        return "\n".join(lines[start:end])
+    except OSError:
+        return ""
+
 def _node_dict(n: Node) -> dict[str, Any]:
     return {
         "id": n.id.hex,
@@ -53,11 +82,25 @@ def _node_dict(n: Node) -> dict[str, Any]:
         "signature": n.signature,
     }
 
-def _traversal_dict(r: TraversalResult) -> dict[str, Any]:
+def _node_dict_with_snippet(
+    n: Node,
+    repo_root: str | None,
+    file_cache: dict[str, list[str]],
+) -> dict[str, Any]:
+    """Like _node_dict but includes an inline source snippet when repo_root is known."""
+    d = _node_dict(n)
+    if repo_root:
+        snippet = _read_snippet(n, repo_root, file_cache)
+        if snippet:
+            d["snippet"] = snippet
+    return d
+
+def _traversal_dict(r: TraversalResult, repo_root: str | None = None) -> dict[str, Any]:
+    file_cache: dict[str, list[str]] = {}
     out: dict[str, Any] = {
-        "entry": _node_dict(r.entry_node),
+        "entry": _node_dict_with_snippet(r.entry_node, repo_root, file_cache),
         "depth_reached": r.depth_reached,
-        "nodes": [_node_dict(n) for n in r.nodes],
+        "nodes": [_node_dict_with_snippet(n, repo_root, file_cache) for n in r.nodes],
         "edges": [
             {"from": e.source_id.hex[:12], "to": e.target_id.hex[:12],
              "type": e.edge_type}
@@ -91,12 +134,14 @@ def jcode_search(
     """
     Search the feature graph for nodes matching a concept or symbol name.
 
-    Uses semantic vector search when available (sentence-transformers installed),
-    falls back to FTS5 keyword search otherwise.
+    Returns results with inline code snippets so you can read the code
+    without a separate file Read call in most cases.
 
-    scope:  Optional folder prefix to restrict search, e.g. "comments/".
+    Uses hybrid search: FTS keyword match first (exact tokens, URL domains,
+    symbol names), then semantic vector search to fill remaining slots.
+
+    scope:  Optional folder prefix to restrict search, e.g. "partners/mmb".
             If scoped search returns nothing, automatically expands to full graph.
-            Pass scope only when the user's request clearly names a feature area.
 
     Args:
         query:     Natural-language or symbol-name, e.g. "date parsing comments".
@@ -105,10 +150,14 @@ def jcode_search(
         jcode_dir: Path to the .jcode store directory.
     """
     graph = _open_graph(jcode_dir)
+    snap = graph.get_snapshot()
+    repo_root = snap.root_path if snap else None
+
     results = search_semantic(graph, query, limit=limit, scope=scope)
+    file_cache: dict[str, list[str]] = {}
     out = []
     for node, score in results:
-        d = _node_dict(node)
+        d = _node_dict_with_snippet(node, repo_root, file_cache)
         d["score"] = round(score, 3)
         out.append(d)
     return out
@@ -123,10 +172,12 @@ def jcode_context(
     """
     Return code context rooted at node_id via forward DFS.
 
+    Includes inline snippets for the entry node and all traversed nodes,
+    so you rarely need a follow-up Read call.
+
     scope:  Optional folder prefix — DFS stops at the boundary and returns
             external dependencies as a separate list. The LLM should inspect
-            external_deps and decide whether to follow them with another
-            jcode_context call or jcode_blast_radius.
+            external_deps and decide whether to follow them.
 
     Args:
         node_id:   Node id hex string (from jcode_search results).
@@ -135,9 +186,11 @@ def jcode_context(
         jcode_dir: Path to the .jcode store directory.
     """
     graph = _open_graph(jcode_dir)
+    snap = graph.get_snapshot()
+    repo_root = snap.root_path if snap else None
     traversal = GraphTraversal(graph)
     result = traversal.context(NodeId(node_id), max_depth=max_depth, scope=scope)
-    return _traversal_dict(result)
+    return _traversal_dict(result, repo_root=repo_root)
 
 @mcp.tool()
 def jcode_blast_radius(
@@ -172,15 +225,14 @@ def jcode_feature_map(
     it gives you the lay of the land so you can choose the right scope
     before calling jcode_search or jcode_context.
 
-    Returns: folders with their top-level classes and functions.
+    Returns: folders with their top-level classes and functions (capped at 20
+    per type — use jcode_search with scope= to drill in).
     """
     graph = _open_graph(jcode_dir)
     from jcode.domain.models import NodeType
     nodes = graph.all_nodes()
 
     _SKIP = {NodeType.MODULE, NodeType.IMPORT, NodeType.VARIABLE}
-    # Cap per-folder lists so the response stays a usable overview rather than
-    # a full symbol dump. Claude should use jcode_search with scope= to drill in.
     _MAX_PER_TYPE = 20
 
     feature_map: dict[str, dict] = {}
@@ -219,34 +271,57 @@ def jcode_feature_map(
 @mcp.tool()
 def jcode_index(
     repo_path: str,
+    extra_paths: list[str] | None = None,
     full_reindex: bool = False,
     jcode_dir: str | None = None,
 ) -> dict[str, Any]:
     """
-    Index or re-index a repository.
+    Index or re-index one or more directories into a shared .jcode store.
+
+    For monorepos with multiple sub-projects, pass the additional roots via
+    extra_paths. All paths are indexed into the same graph so jcode_search
+    and jcode_context work across the whole workspace.
+
+    Example — index a monorepo with two sub-projects:
+        jcode_index(
+            repo_path="/workspace/pluto-mono/pluto",
+            extra_paths=["/workspace/pluto-mono/file-import-pluto"],
+            jcode_dir="/workspace/pluto-mono/.jcode",
+        )
 
     Args:
-        repo_path:    Absolute path to the repository root.
+        repo_path:    Primary repo root (also determines default .jcode location).
+        extra_paths:  Additional repo roots to index into the same store.
         full_reindex: Drop and rebuild entire graph (default False).
         jcode_dir:    Override .jcode store location.
     """
     from jcode.indexer.plugins import build_parser
+
     jcode_path = Path(jcode_dir or os.path.join(repo_path, ".jcode")).resolve()
     jcode_path.mkdir(parents=True, exist_ok=True)
 
-    # Evict from cache so the next tool call picks up the fresh index
+    # Evict cache so next tool call picks up fresh index
     _graph_cache.pop(str(jcode_path), None)
 
-    store    = ObjectStore(jcode_path)
-    graph    = GraphDB(jcode_path)
-    parser   = build_parser(repo_path)
-    indexer  = Indexer(parser, store, graph)
-    snapshot = indexer.index(repo_path, full_reindex=full_reindex)
+    store = ObjectStore(jcode_path)
+    graph = GraphDB(jcode_path)
 
+    all_paths = [repo_path] + (extra_paths or [])
+    snapshots = []
+
+    for i, path in enumerate(all_paths):
+        parser  = build_parser(path)
+        indexer = Indexer(parser, store, graph)
+        # Only wipe on the first path — subsequent paths are always incremental
+        snap = indexer.index(path, full_reindex=(full_reindex and i == 0))
+        snapshots.append(snap)
+
+    last = snapshots[-1]
     return {
-        "snapshot_hash": snapshot.snapshot_hash[:16],
-        "files": snapshot.file_count,
-        "nodes": snapshot.node_count,
-        "edges": snapshot.edge_count,
-        "indexed_at": snapshot.indexed_at,
+        "snapshot_hash": last.snapshot_hash[:16],
+        "paths_indexed": len(all_paths),
+        "files": last.file_count,
+        "nodes": last.node_count,
+        "edges": last.edge_count,
+        "indexed_at": last.indexed_at,
     }

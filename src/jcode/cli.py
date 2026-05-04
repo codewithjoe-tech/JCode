@@ -53,13 +53,22 @@ SQLite graph of every function, class, method, and module, with typed edges
    editing any function. A confidence score < 0.8 means callers outside the
    current scope will break — warn the user first.
 
-5. **Read targeted files only** — after jcode tells you the exact file and
-   line range, read only that file. Do not read files to understand structure.
+5. **Read with line numbers** — jcode search results include the exact file
+   path and line range. Always use `offset` and `limit` when reading:
+
+   ```
+   # jcode told you: file=partners/mmb/client.py  lines=18-66
+   Read(file_path="partners/mmb/client.py", offset=18, limit=48)
+   ```
+
+   **Never do a full file read.** A targeted read costs ~50 tokens; a full
+   file read can cost 2000+. jcode gives you the line numbers — use them.
 
 ## Rules
 
 - NEVER use grep/ripgrep to locate a function, class, or feature. Use `jcode_search`.
 - NEVER read a file just to understand its structure. Use `jcode_context`.
+- NEVER do a full file read — always use `offset` + `limit` with the line range jcode provides.
 - ALWAYS call `jcode_blast_radius` before editing a function.
 - Pass `scope=<folder>` when the user's request clearly names a feature area
   (e.g. "in the comments module", "fix the auth flow").
@@ -180,30 +189,49 @@ def init(repo: str, jcode_dir: str | None, no_claude_md: bool) -> None:
 # jcode index
 @main.command()
 @click.argument("repo", default=".", type=click.Path(exists=True, file_okay=False))
+@click.option("--also", "extra", multiple=True, type=click.Path(exists=True, file_okay=False),
+              help="Additional repo roots to index into the same store (monorepo support). "
+                   "Repeatable: --also ../file-import-pluto --also ../admin-app")
 @click.option("--jcode-dir", default=None, help="Override .jcode location.")
 @click.option("--full", is_flag=True, default=False,
               help="Drop and rebuild the entire graph.")
 @click.option("--workers", "-j", default=4, show_default=True,
               help="Parallel workers for file parsing. Use 1 to disable parallelism.")
-def index(repo: str, jcode_dir: str | None, full: bool, workers: int) -> None:
-    """Index a repository into the feature graph (incremental by default)."""
+def index(repo: str, extra: tuple[str, ...], jcode_dir: str | None, full: bool, workers: int) -> None:
+    """
+    Index one or more repositories into the feature graph (incremental by default).
+
+    \b
+    Single repo (default):
+        jcode index .
+        jcode index /path/to/myproject --full
+
+    \b
+    Monorepo — index multiple sub-projects into one shared store:
+        jcode index pluto --also ../file-import-pluto --jcode-dir ../.jcode
+    """
     jcode_path = _resolve_jcode_dir(repo, jcode_dir)
     jcode_path.mkdir(parents=True, exist_ok=True)
 
-    store   = ObjectStore(jcode_path)
-    graph   = GraphDB(jcode_path)
-    parser  = GenericParser()
-    indexer = Indexer(parser, store, graph)
+    store  = ObjectStore(jcode_path)
+    graph  = GraphDB(jcode_path)
 
-    click.echo(f"Indexing {repo} …")
-    snapshot = indexer.index(repo, full_reindex=full, workers=workers)
+    all_paths = [repo] + list(extra)
 
-    click.echo(
-        f"Done — {snapshot.file_count} files  "
-        f"{snapshot.node_count} nodes  "
-        f"{snapshot.edge_count} edges  "
-        f"[{snapshot.snapshot_hash[:12]}]"
-    )
+    for i, path in enumerate(all_paths):
+        parser  = GenericParser()
+        indexer = Indexer(parser, store, graph)
+        click.echo(f"Indexing {path} …")
+        # Only wipe on the first path to avoid destroying previous paths' data
+        snapshot = indexer.index(path, full_reindex=(full and i == 0), workers=workers)
+        click.echo(
+            f"  {snapshot.file_count} files  "
+            f"{snapshot.node_count} nodes  "
+            f"{snapshot.edge_count} edges  "
+            f"[{snapshot.snapshot_hash[:12]}]"
+        )
+
+    click.echo(f"Done — {len(all_paths)} path(s) indexed into {jcode_path}")
 
 
 # jcode status
