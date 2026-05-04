@@ -175,16 +175,28 @@ def search_semantic(
     scope: str | None = None,
 ) -> list[tuple[Node, float]]:
     """
-    Semantic vector search. Falls back to keyword search if embeddings
-    aren't available. Returns (node, score) pairs.
+    Hybrid search: FTS keyword match first, then semantic vector search.
+
+    FTS runs first so exact tokens (e.g. a partner domain name like
+    "mymoneybazaar") are always found even when the semantic score is low.
+    Semantic results fill the remaining slots, deduplicated against FTS hits.
+    Falls back to FTS-only if embeddings aren't available.
     """
     from jcode.indexer.embedder import get_embedder
 
-    embedder = get_embedder()
-    if not embedder.is_available() or reader.embeddings_count() == 0:
-        # Fallback: wrap keyword results with a dummy score
-        nodes = search_entry_points(reader, query, limit=limit, scope=scope)
-        return [(n, 1.0) for n in nodes]
+    # --- FTS pass (always runs) ---
+    fts_nodes = search_entry_points(reader, query, limit=limit, scope=scope)
+    fts_ids = {n.id.hex for n in fts_nodes}
+    results: list[tuple[Node, float]] = [(n, 1.0) for n in fts_nodes]
 
-    query_vec = embedder.embed(query)
-    return reader.search_semantic(query_vec, limit=limit, scope=scope)
+    # --- Semantic pass (fills remaining slots) ---
+    embedder = get_embedder()
+    if embedder.is_available() and reader.embeddings_count() > 0:
+        query_vec = embedder.embed(query)
+        semantic = reader.search_semantic(query_vec, limit=limit, scope=scope)
+        for node, score in semantic:
+            if node.id.hex not in fts_ids:
+                results.append((node, score))
+
+    # Return up to `limit` results, FTS hits first
+    return results[:limit]

@@ -5,7 +5,7 @@ Schema
 ------
 nodes            — one row per Node
 edges            — directed adjacency list
-nodes_fts        — FTS5 virtual table on node titles
+nodes_fts        — FTS5 virtual table on node titles + keywords
 node_embeddings  — sentence-transformer vectors keyed by node_id
 file_hashes      — content-hash manifest for incremental indexing
 snapshots        — single-row latest IndexSnapshot
@@ -40,7 +40,8 @@ CREATE TABLE IF NOT EXISTS nodes (
     file_path   TEXT NOT NULL,
     line_start  INTEGER NOT NULL,
     line_end    INTEGER NOT NULL,
-    signature   TEXT NOT NULL DEFAULT ''
+    signature   TEXT NOT NULL DEFAULT '',
+    keywords    TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS edges (
@@ -51,17 +52,17 @@ CREATE TABLE IF NOT EXISTS edges (
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts
-    USING fts5(id UNINDEXED, title, content='nodes', content_rowid='rowid');
+    USING fts5(id UNINDEXED, title, keywords, content='nodes', content_rowid='rowid');
 
 CREATE TRIGGER IF NOT EXISTS nodes_ai AFTER INSERT ON nodes BEGIN
-    INSERT INTO nodes_fts(rowid, id, title) VALUES (new.rowid, new.id, new.title);
+    INSERT INTO nodes_fts(rowid, id, title, keywords) VALUES (new.rowid, new.id, new.title, new.keywords);
 END;
 CREATE TRIGGER IF NOT EXISTS nodes_au AFTER UPDATE ON nodes BEGIN
-    INSERT INTO nodes_fts(nodes_fts, rowid, id, title) VALUES ('delete', old.rowid, old.id, old.title);
-    INSERT INTO nodes_fts(rowid, id, title) VALUES (new.rowid, new.id, new.title);
+    INSERT INTO nodes_fts(nodes_fts, rowid, id, title, keywords) VALUES ('delete', old.rowid, old.id, old.title, old.keywords);
+    INSERT INTO nodes_fts(rowid, id, title, keywords) VALUES (new.rowid, new.id, new.title, new.keywords);
 END;
 CREATE TRIGGER IF NOT EXISTS nodes_ad AFTER DELETE ON nodes BEGIN
-    INSERT INTO nodes_fts(nodes_fts, rowid, id, title) VALUES ('delete', old.rowid, old.id, old.title);
+    INSERT INTO nodes_fts(nodes_fts, rowid, id, title, keywords) VALUES ('delete', old.rowid, old.id, old.title, old.keywords);
 END;
 
 CREATE TABLE IF NOT EXISTS node_embeddings (
@@ -92,8 +93,35 @@ CREATE TABLE IF NOT EXISTS meta (
     value   TEXT NOT NULL
 );
 """
+
+_MIGRATION_KEYWORDS = """
+-- Add keywords column to existing databases that predate this field
+ALTER TABLE nodes ADD COLUMN keywords TEXT NOT NULL DEFAULT '';
+"""
+
+_MIGRATION_FTS_KEYWORDS = """
+-- Rebuild FTS table to include keywords column
+DROP TRIGGER IF EXISTS nodes_ai;
+DROP TRIGGER IF EXISTS nodes_au;
+DROP TRIGGER IF EXISTS nodes_ad;
+DROP TABLE IF EXISTS nodes_fts;
+CREATE VIRTUAL TABLE nodes_fts
+    USING fts5(id UNINDEXED, title, keywords, content='nodes', content_rowid='rowid');
+CREATE TRIGGER nodes_ai AFTER INSERT ON nodes BEGIN
+    INSERT INTO nodes_fts(rowid, id, title, keywords) VALUES (new.rowid, new.id, new.title, new.keywords);
+END;
+CREATE TRIGGER nodes_au AFTER UPDATE ON nodes BEGIN
+    INSERT INTO nodes_fts(nodes_fts, rowid, id, title, keywords) VALUES ('delete', old.rowid, old.id, old.title, old.keywords);
+    INSERT INTO nodes_fts(rowid, id, title, keywords) VALUES (new.rowid, new.id, new.title, new.keywords);
+END;
+CREATE TRIGGER nodes_ad AFTER DELETE ON nodes BEGIN
+    INSERT INTO nodes_fts(nodes_fts, rowid, id, title, keywords) VALUES ('delete', old.rowid, old.id, old.title, old.keywords);
+END;
+INSERT INTO nodes_fts(nodes_fts) VALUES ('rebuild');
+"""
 # Helpers
 def _row_to_node(row: sqlite3.Row) -> Node:
+    keys = row.keys()
     return Node(
         id=NodeId(row["id"]),
         node_type=NodeType(row["node_type"]),
@@ -103,6 +131,7 @@ def _row_to_node(row: sqlite3.Row) -> Node:
         line_start=row["line_start"],
         line_end=row["line_end"],
         signature=row["signature"],
+        keywords=row["keywords"] if "keywords" in keys else "",
     )
 
 def _row_to_edge(row: sqlite3.Row) -> Edge:
@@ -132,6 +161,30 @@ class GraphDB(GraphReaderPort, GraphWriterPort):
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_DDL)
         self._conn.commit()
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Apply schema migrations for databases created before keywords support."""
+        cols = {r[1] for r in self._conn.execute("PRAGMA table_info(nodes)").fetchall()}
+
+        # Step 1 — add keywords column to nodes if missing
+        if "keywords" not in cols:
+            try:
+                self._conn.execute("ALTER TABLE nodes ADD COLUMN keywords TEXT NOT NULL DEFAULT ''")
+                self._conn.commit()
+            except sqlite3.OperationalError:
+                pass  # already exists — race or concurrent open
+
+        # Step 2 — rebuild FTS to include keywords if it's missing that column
+        fts_cols = set()
+        try:
+            fts_cols = {r[2] for r in self._conn.execute("PRAGMA table_info(nodes_fts)").fetchall()}
+        except sqlite3.OperationalError:
+            pass
+
+        if "keywords" not in fts_cols:
+            self._conn.executescript(_MIGRATION_FTS_KEYWORDS)
+            self._conn.commit()
 
     @contextmanager
     def _tx(self):
@@ -144,10 +197,11 @@ class GraphDB(GraphReaderPort, GraphWriterPort):
     # GraphWriterPort
     def upsert_node(self, node: Node) -> None:
         sql = """
-            INSERT INTO nodes (id, node_type, name, title, file_path, line_start, line_end, signature)
-            VALUES (:id, :node_type, :name, :title, :file_path, :line_start, :line_end, :signature)
+            INSERT INTO nodes (id, node_type, name, title, file_path, line_start, line_end, signature, keywords)
+            VALUES (:id, :node_type, :name, :title, :file_path, :line_start, :line_end, :signature, :keywords)
             ON CONFLICT(id) DO UPDATE SET
-                title=excluded.title, signature=excluded.signature, line_end=excluded.line_end
+                title=excluded.title, signature=excluded.signature,
+                line_end=excluded.line_end, keywords=excluded.keywords
         """
         with self._tx():
             self._conn.execute(sql, {
@@ -155,6 +209,7 @@ class GraphDB(GraphReaderPort, GraphWriterPort):
                 "name": node.name, "title": node.title,
                 "file_path": node.file_path, "line_start": node.line_start,
                 "line_end": node.line_end, "signature": node.signature,
+                "keywords": node.keywords,
             })
 
     def upsert_edge(self, edge: Edge) -> None:
@@ -169,10 +224,11 @@ class GraphDB(GraphReaderPort, GraphWriterPort):
         if not nodes:
             return
         sql = """
-            INSERT INTO nodes (id, node_type, name, title, file_path, line_start, line_end, signature)
-            VALUES (:id, :node_type, :name, :title, :file_path, :line_start, :line_end, :signature)
+            INSERT INTO nodes (id, node_type, name, title, file_path, line_start, line_end, signature, keywords)
+            VALUES (:id, :node_type, :name, :title, :file_path, :line_start, :line_end, :signature, :keywords)
             ON CONFLICT(id) DO UPDATE SET
-                title=excluded.title, signature=excluded.signature, line_end=excluded.line_end
+                title=excluded.title, signature=excluded.signature,
+                line_end=excluded.line_end, keywords=excluded.keywords
         """
         with self._tx():
             self._conn.executemany(sql, [
@@ -181,9 +237,26 @@ class GraphDB(GraphReaderPort, GraphWriterPort):
                     "name": n.name, "title": n.title,
                     "file_path": n.file_path, "line_start": n.line_start,
                     "line_end": n.line_end, "signature": n.signature,
+                    "keywords": n.keywords,
                 }
                 for n in nodes
             ])
+
+    def bulk_update_keywords(self, items: list[tuple[NodeId, str]]) -> None:
+        """
+        Update the keywords column for a batch of nodes and refresh FTS.
+        items: list of (node_id, keywords_string) pairs.
+        keywords_string is space-separated tokens, e.g. "mymoneybazaar.com prefr.in".
+        """
+        if not items:
+            return
+        with self._tx():
+            self._conn.executemany(
+                "UPDATE nodes SET keywords = ? WHERE id = ?",
+                [(kw, nid.hex) for nid, kw in items],
+            )
+            # Rebuild FTS so the new keywords are immediately searchable
+            self._conn.execute("INSERT INTO nodes_fts(nodes_fts) VALUES ('rebuild')")
 
     def bulk_upsert_edges(self, edges: list[Edge]) -> None:
         """Insert all edges in a single transaction — O(1) commits."""
@@ -433,7 +506,7 @@ class GraphDB(GraphReaderPort, GraphWriterPort):
         limit: int = 20,
         scope: str | None = None,
     ) -> list[Node]:
-        """FTS5 search with optional scope (file_path prefix filter)."""
+        """FTS5 search over node titles and keywords, with optional scope filter."""
         scope_sql  = "AND n.file_path LIKE ?" if scope else ""
         scope_arg  = (scope.rstrip("/") + "/%",) if scope else ()
         try:

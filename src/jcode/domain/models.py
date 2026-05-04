@@ -48,6 +48,7 @@ class Node:
     line_start: int
     line_end: int
     signature: str = ""
+    keywords: str = ""   # space-separated tokens extracted post-index (e.g. URL domains)
 
 @dataclass(frozen=True, slots=True)
 class Edge:

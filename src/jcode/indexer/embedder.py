@@ -278,9 +278,12 @@ def embed_graph(
     # Pre-load model now so the device message prints before the progress bar
     embedder._load()
 
-    # Build embedding texts
+    # Build embedding texts + extract URL keywords for FTS
+    _url_re = re.compile(r'https?://[^\s\'"\\]+')
     file_cache: dict[str, list[str]] = {}
     texts: list[str] = []
+    keyword_updates: list[tuple] = []   # (NodeId, keywords_str)
+
     for node in nodes:
         callees = [
             node_map[e.target_id].name
@@ -292,10 +295,17 @@ def embed_graph(
         )
         texts.append(build_embed_text(node, callees, source_lines))
 
+        # Extract URLs from source and store as FTS-searchable keywords
+        if source_lines:
+            urls = list(dict.fromkeys(
+                url for line in source_lines for url in _url_re.findall(line)
+            ))
+            if urls:
+                keyword_updates.append((node.id, " ".join(urls)))
+
     # Encode in chunks so we can show a real progress bar
     CHUNK = 256
     all_vectors: list[list[float]] = []
-    total_chunks = (len(texts) + CHUNK - 1) // CHUNK
 
     with click.progressbar(
         length=len(texts),
@@ -310,7 +320,11 @@ def embed_graph(
             all_vectors.extend(embedder.embed_batch(batch))
             bar.update(len(batch))
 
-    # Bulk store — single transaction instead of N commits
+    # Bulk store embeddings — single transaction
     graph.bulk_put_embeddings(list(zip([n.id for n in nodes], all_vectors, strict=False)))
+
+    # Store URL keywords in nodes table so FTS can match them directly
+    if keyword_updates:
+        graph.bulk_update_keywords(keyword_updates)
 
     return len(nodes)
