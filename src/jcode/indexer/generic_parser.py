@@ -188,10 +188,16 @@ class GenericParser:
 
     def __init__(self, plugins: list | None = None):
         self._plugins: list = plugins or []
-        self._plugin_map: dict[str, object] = {}
+        self._plugin_map: dict[str, object] = {}        # call name → plugin
+        self._jsx_plugins: list = []                    # plugins with handle_jsx_element
+        self._generic_plugins: list = []               # plugins with handle_call_generic
         for p in self._plugins:
             for name in p.handled_names:
                 self._plugin_map[name] = p
+            if hasattr(p, "handle_jsx_element"):
+                self._jsx_plugins.append(p)
+            if hasattr(p, "handle_call_generic"):
+                self._generic_plugins.append(p)
         # Lazy cache: ext -> (LangConfig, Language, Query, Parser) | None
         self._cache: dict[str, tuple | None] = {}
 
@@ -413,6 +419,15 @@ class GenericParser:
                     p_nodes, p_edges = plugin.handle_call(ts_call, src, effective_caller)
                     nodes.extend(p_nodes)
                     edges.extend(p_edges)
+                elif self._generic_plugins and caller_jnode is not None:
+                    # Generic plugins see every call — used for pattern-based detection
+                    # (e.g. React hooks: any useXxx() call regardless of exact name)
+                    for gp in self._generic_plugins:
+                        p_nodes, p_edges = gp.handle_call_generic(
+                            callee_name, ts_call, src, caller_jnode
+                        )
+                        nodes.extend(p_nodes)
+                        edges.extend(p_edges)
                 else:
                     if caller_jnode is None:
                         continue
@@ -421,6 +436,22 @@ class GenericParser:
                     nodes.append(prov)
                     edges.append(Edge(source_id=caller_jnode.id, target_id=prov.id,
                                       edge_type=EdgeType.CALLS))
+
+        # Pass 3: JSX elements — forwarded to plugins that implement handle_jsx_element
+        # Only runs if there are JSX-aware plugins (e.g. jcode-react) to avoid overhead.
+        if self._jsx_plugins:
+            for _, capture_dict in all_matches:
+                for ts_jsx in capture_dict.get("jsx", []):
+                    # Find the enclosing function/component for this JSX element
+                    caller_ts = _find_caller(ts_jsx, cfg)
+                    caller_jnode = fn_node_map.get(caller_ts.id) if caller_ts else mod_node
+                    effective_caller = caller_jnode or mod_node
+                    for plugin in self._jsx_plugins:
+                        p_nodes, p_edges = plugin.handle_jsx_element(
+                            ts_jsx, src, effective_caller
+                        )
+                        nodes.extend(p_nodes)
+                        edges.extend(p_edges)
 
         return nodes, edges
 

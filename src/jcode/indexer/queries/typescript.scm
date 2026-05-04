@@ -13,3 +13,7 @@
 
 ; Calls
 (call_expression) @call
+
+; JSX — React component usage
+(jsx_opening_element) @jsx
+(jsx_self_closing_element) @jsx
