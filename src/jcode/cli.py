@@ -64,12 +64,26 @@ SQLite graph of every function, class, method, and module, with typed edges
    **Never do a full file read.** A targeted read costs ~50 tokens; a full
    file read can cost 2000+. jcode gives you the line numbers — use them.
 
+## After making code changes
+
+**Always re-index after editing files** so the graph stays in sync:
+
+```
+jcode index .
+```
+
+Run this after any edit session — new functions, renamed symbols, deleted
+files, or refactors will not be visible to `jcode_search` or
+`jcode_context` until the index is refreshed. The index is incremental, so
+it only re-processes files that changed.
+
 ## Rules
 
 - NEVER use grep/ripgrep to locate a function, class, or feature. Use `jcode_search`.
 - NEVER read a file just to understand its structure. Use `jcode_context`.
 - NEVER do a full file read — always use `offset` + `limit` with the line range jcode provides.
 - ALWAYS call `jcode_blast_radius` before editing a function.
+- ALWAYS run `jcode index .` after making code changes to keep the graph current.
 - Pass `scope=<folder>` when the user's request clearly names a feature area
   (e.g. "in the comments module", "fix the auth flow").
 - If scoped search returns nothing, jcode automatically falls back to the
